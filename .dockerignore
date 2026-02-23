@@ -1,0 +1,9 @@
+.git
+.gitignore
+target
+.vscode
+.evolution
+node_modules
+Docker
+README.md
+docs
