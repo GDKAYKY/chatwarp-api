@@ -1,0 +1,37 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "dockerfile",
+      "request": "launch",
+      "name": "Docker: Build",
+      "dockerfile": "Dockerfile",
+      "contextPath": "${workspaceFolder}"
+    },
+    {
+      "name": "Debug chatwarp-api",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin",
+          "chatwarp-api",
+          "--package",
+          "chatwarp-api"
+        ],
+        "filter": {
+          "name": "chatwarp-api",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "sourceLanguages": [
+        "rust"
+      ]
+    },
+
+  ]
+}
