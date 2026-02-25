@@ -1,68 +1,53 @@
 # chatwarp-api
 
-Reescrita em Rust (Axum) do runtime principal da Evolution API v2, com integração de WhatsApp via sidecar gRPC.
+API HTTP em Rust para o runtime Direct WA Client (sem sidecar gRPC).
 
-## Estado atual
-- Runtime HTTP/HTTPS funcional com fallback de HTTPS para HTTP.
-- Configuração por `.env` com chaves compatíveis com Evolution API v2.
-- PostgreSQL obrigatório no boot (com validação básica de schema).
-- Sidecar gRPC obrigatório no boot (`SIDECAR_GRPC_ENDPOINT`).
-- Métricas `/metrics`, websocket `/ws`, manager `/manager` e assets `/assets/*`.
-- Frontend do manager versionado localmente em `manager/dist` (sem dependência externa).
-- Parte das rotas já implementada; restante retorna `501 Not Implemented`.
+## Estado atual (M0-M2)
+
+Entregue:
+- Bootstrap do crate (`src/lib.rs`) com `run()` funcional.
+- Runtime Axum mínimo com:
+  - `GET /`
+  - `GET /healthz`
+  - `GET /readyz`
+  - fallback `501` padronizado para rotas não implementadas.
+- Base do protocolo WA em `src/wa/`:
+  - `transport.rs` (WebSocket + framing de 3 bytes)
+  - `noise.rs` (estado Noise + AES-GCM/HKDF)
+  - `keys.rs` (keypair X25519)
+  - `handshake.rs` + `handshake_proto.rs` (handshake sintético M2)
+- Testes offline:
+  - `tests/app_test.rs`
+  - `tests/transport_test.rs`
+  - `tests/noise_test.rs`
+  - `tests/handshake_test.rs`
+
+Ainda não entregue:
+- M3+ (`binary_node`, auth persistida, signal e rotas de domínio).
 
 ## Requisitos
-- Rust toolchain (stable) + Cargo
-- PostgreSQL acessível
-- Sidecar gRPC do WhatsApp/Baileys acessível
 
-## Setup rápido
-1. Ajuste variáveis no `.env` (já existe exemplo dev no repositório).
-2. Gere/atualize código protobuf:
-   - `cargo clean`
-   - `cargo check`
-3. Suba a API:
-   - `cargo run`
+- Rust toolchain stable com `cargo`
+
+## Execução local
+
+```bash
+cargo run
+```
 
 Servidor padrão: `http://localhost:8080`
 
-## Dependências via Docker Compose
-Suba API + PostgreSQL + RabbitMQ:
-- `docker compose up -d`
+## Qualidade
 
-Suba também PgAdmin (opcional):
-- `docker compose --profile tools up -d`
+```bash
+cargo check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
 
-PgAdmin: `http://localhost:4000`  
-RabbitMQ UI: `http://localhost:15672`
+## Documentação
 
-Observação: o sidecar gRPC de WhatsApp não está incluído nesse compose.
-
-## Debug no VS Code
-Existe `./.vscode/launch.json` com profile `Debug chatwarp-api` (CodeLLDB), usando `envFile=${workspaceFolder}/.env`.
-
-## Endpoints principais
-- `GET /` health de boas-vindas
-- `POST /verify-creds`
-- `GET /metrics`
-- `GET /ws`
-- `GET /manager`
-- `GET /assets/*file`
-
-Rotas de domínio:
-- `/instance`
-- `/message`
-- `/call`
-- `/chat`
-- `/business`
-- `/group`
-- `/template`
-- `/settings`
-- `/proxy`
-- `/label`
-- integrações (`/webhook/*`, `/baileys/*`, `/s3/*`, etc.)
-
-## Documentação detalhada
-- `docs/DEVELOPMENT.md` - arquitetura, boot, debug, troubleshooting
-- `docs/ENV.md` - variáveis de ambiente aceitas hoje
-- `docs/ROUTES.md` - status de implementação de rotas
+- `docs/PLANNING.md` - milestones e tasks
+- `docs/ROUTES.md` - status de rotas
+- `docs/ENV.md` - variáveis de ambiente
+- `docs/PROJECT_ARCHITECTURE.md` - arquitetura alvo

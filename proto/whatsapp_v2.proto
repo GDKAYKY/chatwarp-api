@@ -1,38 +1,7 @@
 syntax = "proto3";
 
-package whatsapp.v2;
+package chatwarp.internal;
 
-message HealthRequest {}
-
-message HealthResponse {
-  bool ok = 1;
-  string message = 2;
-}
-
-message InstanceRequest {
-  string instance_name = 1;
-}
-
-message GenericResponse {
-  bool ok = 1;
-  string message = 2;
-  string payload_json = 3;
-}
-
-message SendMessageRequest {
-  string instance_name = 1;
-  string operation = 2;
-  string payload_json = 3;
-}
-
-service SessionService {
-  rpc Health(HealthRequest) returns (HealthResponse);
-  rpc ConnectInstance(InstanceRequest) returns (GenericResponse);
-  rpc RestartInstance(InstanceRequest) returns (GenericResponse);
-  rpc LogoutInstance(InstanceRequest) returns (GenericResponse);
-  rpc ConnectionState(InstanceRequest) returns (GenericResponse);
-}
-
-service MessageService {
-  rpc Execute(SendMessageRequest) returns (GenericResponse);
-}
+// Legacy placeholder kept for compatibility with older tooling.
+// Runtime no longer depends on sidecar gRPC code generation.
+message Placeholder {}

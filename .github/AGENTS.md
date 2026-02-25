@@ -1,36 +1,41 @@
 # AGENTS.md
 
-> Instruções para agentes de codificação (Codex, GitHub Copilot, Claude Code).
-> Leia este arquivo antes de qualquer tarefa. Ele define contexto, regras e workflow.
+> Instruções para agentes de codificação (Codex, GitHub Copilot).
+> Leia este arquivo antes de qualquer tarefa.
 
 ---
 
-## Projeto
+## O que é este projeto
 
-**chatwarp-api** — API HTTP em Rust que atua como proxy/gateway para um sidecar WhatsApp Web (gRPC).
-Não é um cliente WhatsApp direto. A lógica de protocolo (Noise, Signal, BinaryNode) vive no sidecar.
+**chatwarp-api** — API HTTP em Rust que implementa um cliente WhatsApp Web completo.
+Não há sidecar. Não há processo externo. A lógica de protocolo (Noise, Signal, BinaryNode,
+WebSocket) vive diretamente neste repositório.
 
 Documentação de referência (ler antes de codar):
 
 ```
-docs/PLANNING.md             tarefas priorizadas e milestones
-docs/ROUTES.md               status de todas as rotas HTTP
-docs/PROJECT_ARCHITECTURE.md arquitetura de módulos e dependências
-docs/ENV.md                  variáveis de ambiente e defaults
+docs/PLANNING.md              milestones, tasks priorizadas
+docs/ROUTES.md                status de todas as rotas HTTP
+docs/PROJECT_ARCHITECTURE.md  arquitetura de módulos e dependências
+docs/ENV.md                   variáveis de ambiente e defaults
 ```
 
 ---
 
 ## Stack
 
-- **Linguagem:** Rust (edition 2021)
-- **Runtime:** Tokio
-- **HTTP:** Axum
-- **Banco:** PostgreSQL via SQLx
-- **gRPC:** Tonic (sidecar)
-- **Serialização:** serde + serde_json
-- **Erros:** thiserror (libs) + anyhow (bins/handlers)
-- **Logging:** tracing + tracing-subscriber
+| Responsabilidade | Crate |
+|---|---|
+| Runtime async | `tokio` |
+| HTTP | `axum` |
+| WebSocket (WA) | `tokio-tungstenite` |
+| Protobuf | `prost` + `prost-build` |
+| Noise / Crypto | `x25519-dalek`, `aes-gcm`, `hkdf`, `sha2` |
+| Signal E2E | `libsignal-client` |
+| Banco | `sqlx` + PostgreSQL |
+| Serialização | `serde`, `serde_json`, `bytes` |
+| Erros | `thiserror` (libs) + `anyhow` (handlers) |
+| Logging | `tracing` + `tracing-subscriber` |
 
 ---
 
@@ -38,33 +43,33 @@ docs/ENV.md                  variáveis de ambiente e defaults
 
 ### Código
 
-- Sem `unwrap()` ou `expect()` em código de produção. Usar `?` e propagar erros.
+- Sem `unwrap()` ou `expect()` em código de produção. Usar `?`.
 - Sem `panic!()` fora de testes.
-- Tipos de erro de biblioteca: `thiserror`. Handlers e bins: `anyhow`.
-- Toda função pública precisa de doc comment (`///`).
-- Sem `clone()` desnecessário em tipos grandes — preferir referências ou `Arc`.
+- Tipos de erro em módulos internos: `thiserror`. Em handlers: `anyhow`.
+- Toda função pública com doc comment (`///`).
 - `bytes::Bytes` para payloads binários. Não usar `Vec<u8>` no caminho crítico.
+- Sem `clone()` desnecessário em tipos grandes — preferir referências ou `Arc`.
 
 ### Estrutura
 
-- Cada módulo tem responsabilidade única. Não adicionar lógica de negócio em handlers HTTP.
-- Handlers apenas: deserializar request → chamar service → serializar response.
-- Services não importam tipos de Axum (sem `axum::extract` fora de handlers).
+- Handlers HTTP apenas: deserializar request → chamar service → serializar response.
+- Services não importam tipos de Axum. Sem `axum::extract` fora de handlers.
+- Protocolo WA (Noise, Signal, BinaryNode, Transport) vive em `src/wa/`.
 - Camadas inferiores não importam camadas superiores. Ver DAG em `PROJECT_ARCHITECTURE.md`.
 
 ### Testes
 
-- Toda função nova precisa de pelo menos um teste unitário.
+- Toda função nova: pelo menos um teste unitário.
 - `cargo test` deve passar antes de qualquer commit.
-- Fixtures de request/response em `tests/fixtures/`.
-- Mocks de gRPC: usar `tonic::transport::Channel` mockado, não chamar sidecar real em testes.
+- Fixtures em `tests/fixtures/` — frames `.bin` capturados do WA real.
+- Módulos de protocolo (`noise`, `binary_node`, `transport`) devem ter testes com fixtures reais.
 
 ### Git
 
 - Um commit por task do `PLANNING.md`.
-- Mensagem de commit: `[T{id}] descrição curta` — ex: `[T1.1] add WsTransport connect`.
+- Formato: `[T{id}] descrição curta` — ex: `[T1.1] add WsTransport connect`.
 - Não misturar tasks de milestones diferentes no mesmo commit.
-- Branch por milestone: `m1-transport`, `m2-noise`, etc.
+- Branch por milestone: `m1-transport`, `m2-noise`, `m3-binary-node`, etc.
 
 ---
 
@@ -73,43 +78,37 @@ docs/ENV.md                  variáveis de ambiente e defaults
 ```
 1. Ler a task em PLANNING.md
 2. Verificar dependências no DAG (PROJECT_ARCHITECTURE.md)
-3. Verificar se a rota está documentada em ROUTES.md
+3. Verificar se a rota está documentada em ROUTES.md (se for task de rota)
 4. Implementar
 5. Escrever testes
-6. cargo clippy --all-targets -- -D warnings    (zero warnings)
+6. cargo clippy --all-targets -- -D warnings   (zero warnings)
 7. cargo test
 8. Commit
 ```
 
 ---
 
-## Rotas — Comportamento Esperado
+## Rotas
 
-- Rotas com status `✅` em `ROUTES.md`: não alterar comportamento existente.
-- Rotas com status `❌ 501`: retornar `501 Not Implemented` com body:
+- Rotas `✅` em `ROUTES.md`: não alterar comportamento existente.
+- Rotas `❌ 501`: retornar:
   ```json
   { "error": "not_implemented", "route": "<path>" }
   ```
 - Novas rotas: adicionar em `ROUTES.md` antes de implementar.
-- Parâmetros de rota: sempre `:param` (sintaxe Axum). Nunca `{param}`.
+- Parâmetros: sempre `:param`. Nunca `{param}`. Axum não falha em compile-time com sintaxe errada.
 
 ---
 
-## Variáveis de Ambiente
+## Instâncias WA
 
-- Nunca hardcodar valores que estão em `ENV.md`.
-- Defaults devem ser definidos em `src/config.rs` via `std::env::var(...).unwrap_or(...)`.
-- `AUTHENTICATION_API_KEY` default (`BQYHJGJHJ`) é só para dev. Não usar em produção.
-- Ver `docs/ENV.md` para lista completa.
+Cada instância é uma sessão WhatsApp independente com:
+- Conexão WebSocket própria (`src/wa/transport.rs`)
+- Estado Noise próprio (`src/wa/noise.rs`)
+- AuthState persistido no banco por `instance_name`
+- Signal store próprio por instância
 
----
-
-## gRPC / Sidecar
-
-- Endpoint: `SIDECAR_GRPC_ENDPOINT` (default: `http://127.0.0.1:50051`)
-- Timeout de conexão: `SIDECAR_CONNECT_TIMEOUT_MS` (default: `3000`)
-- Se sidecar estiver indisponível: retornar `503 Service Unavailable`, não `500`.
-- Não fazer retry automático sem backoff. Ver lógica de reconexão em `PLANNING.md`.
+Não compartilhar estado entre instâncias. Sem globals mutáveis.
 
 ---
 
@@ -117,67 +116,30 @@ docs/ENV.md                  variáveis de ambiente e defaults
 
 ### Context7 (`@upstash/context7-mcp`)
 
-Usado para buscar documentação atualizada de crates e frameworks.
+Documentação atualizada de crates e frameworks.
 
 Quando usar:
-- Dúvida sobre API de `axum`, `tonic`, `sqlx`, `tokio`, `prost`
-- Verificar versão atual de uma crate antes de adicionar no `Cargo.toml`
-- Buscar exemplos de uso oficiais
+- Dúvida sobre API de `axum`, `sqlx`, `tokio`, `prost`, `tonic`
+- Verificar versão atual de crate antes de adicionar no `Cargo.toml`
 
-Como usar (Codex):
 ```
-use context7 to find axum extractor documentation
+use context7 to find axum middleware documentation
 use context7 to check current sqlx version and query macro usage
 ```
 
 ---
 
-### Sugestões de MCP Adicionais
+### `rust-analyzer-mcp` (`zeenix/rust-analyzer-mcp`)
 
-#### `@modelcontextprotocol/server-github`
-Acesso direto ao repositório via API GitHub.
-
-Útil para:
-- Buscar implementações de referência no Baileys (`WhiskeySockets/Baileys`)
-- Verificar issues abertas antes de implementar algo
-- Ler arquivos específicos do repo sem clonar
-
-```
-use github mcp to read Baileys/src/WABinary/token.ts
-use github mcp to search issues for "noise handshake"
-```
-
-#### `@modelcontextprotocol/server-postgres`
-Conexão direta com o banco de desenvolvimento.
-
-Útil para:
-- Verificar schema atual antes de escrever queries SQLx
-- Validar migrations
-- Inspecionar dados de teste
-
-```
-use postgres mcp to describe table instances
-use postgres mcp to check current schema version
-```
-
-#### `@modelcontextprotocol/server-filesystem`
-Acesso ao filesystem do projeto.
-
-Útil para:
-- Ler fixtures de teste em `tests/fixtures/`
-- Inspecionar `.proto` files antes de gerar código
-- Verificar estrutura atual de pastas sem `tree`
-
-#### `rust-analyzer-mcp` (`zeenix/rust-analyzer-mcp`)
-Servidor MCP com integração nativa ao rust-analyzer. Escrito em Rust, roda via stdio.
+Integração nativa com rust-analyzer via MCP.
 
 Instalação:
 ```bash
 cargo install rust-analyzer-mcp
-rustup component add rust-analyzer   # dependência
+rustup component add rust-analyzer
 ```
 
-Configuração (`.mcp.json` na raiz do projeto):
+Configuração (`.mcp.json` na raiz):
 ```json
 {
   "mcpServers": {
@@ -188,43 +150,52 @@ Configuração (`.mcp.json` na raiz do projeto):
 }
 ```
 
-Tools disponíveis:
-
-| Tool | Uso |
+| Tool | Quando usar |
 |---|---|
-| `rust_analyzer_symbols` | Lista símbolos de um arquivo (funções, structs, enums) |
-| `rust_analyzer_definition` | Navega para definição de símbolo por posição |
-| `rust_analyzer_references` | Encontra todas as referências de um símbolo |
-| `rust_analyzer_hover` | Tipo e documentação de um símbolo |
-| `rust_analyzer_diagnostics` | Erros e warnings de um arquivo específico |
-| `rust_analyzer_workspace_diagnostics` | Diagnósticos de todo o workspace |
-| `rust_analyzer_completion` | Sugestões de completion por posição |
+| `rust_analyzer_hover` | Verificar tipo antes de escrever código |
+| `rust_analyzer_diagnostics` | Checar erros de um arquivo sem rodar `cargo check` |
+| `rust_analyzer_workspace_diagnostics` | Validar workspace inteiro antes de commitar |
+| `rust_analyzer_definition` | Navegar definição de trait sem perder contexto |
 | `rust_analyzer_code_actions` | Quick fixes e refatorações disponíveis |
-| `rust_analyzer_format` | Formatar arquivo via rustfmt |
+| `rust_analyzer_symbols` | Listar símbolos de um módulo |
+
+> https://github.com/zeenix/rust-analyzer-mcp
+
+---
+
+### Sugestões Adicionais
+
+#### `@modelcontextprotocol/server-github`
+Acesso à API do GitHub.
 
 Útil para:
-- Verificar tipos antes de escrever código (`hover`)
-- Checar erros sem rodar `cargo check` (`diagnostics`)
-- Navegar definições de trait sem sair do contexto (`definition`)
-- Validar workspace inteiro antes de commitar (`workspace_diagnostics`)
+- Ler arquivos do Baileys sem clonar (`WhiskeySockets/Baileys`)
+- Buscar token dictionary: `Baileys/src/WABinary/token.ts`
+- Ler `.proto` files: `Baileys/src/WAProto/`
 
-> Repositório: https://github.com/zeenix/rust-analyzer-mcp
-
-#### `@modelcontextprotocol/server-brave-search`
-Busca na web com Brave Search.
+#### `@modelcontextprotocol/server-postgres`
+Conexão direta com o banco de desenvolvimento.
 
 Útil para:
-- Buscar soluções para erros obscuros de compilação Rust
-- Encontrar exemplos de uso de crates menos documentadas
-- Pesquisar mudanças recentes no protocolo WhatsApp Web
+- Verificar schema antes de escrever queries SQLx
+- Validar migrations
+- Inspecionar AuthState persistido por instância
+
+#### `@modelcontextprotocol/server-filesystem`
+Acesso ao filesystem do projeto.
+
+Útil para:
+- Ler fixtures `tests/fixtures/*.bin`
+- Inspecionar `.proto` files antes de gerar código
 
 ---
 
 ## O que NÃO fazer
 
-- Não implementar lógica de protocolo WhatsApp diretamente neste repo. Isso é responsabilidade do sidecar.
-- Não adicionar dependências sem justificativa. Toda crate nova precisa de comentário no `Cargo.toml`.
-- Não criar arquivos de configuração duplicados. Tudo em `src/config.rs`.
+- Não criar processo externo ou sidecar. Tudo roda in-process.
+- Não adicionar crates sem justificativa. Comentar no `Cargo.toml`.
+- Não duplicar configuração fora de `src/config.rs`.
 - Não ignorar warnings do clippy. Zero warnings é requisito.
-- Não implementar providers de chatbot (evolutionBot, chatwoot, etc.) sem task explícita em `PLANNING.md`. Retornar 501.
-- Não alterar rotas marcadas como "Segurar" em `ROUTES.md` sem discussão prévia.
+- Não implementar chatbot providers sem task explícita no `PLANNING.md`.
+- Não alterar rotas marcadas como "Segurar" no `ROUTES.md`.
+- Não compartilhar estado Noise ou Signal entre instâncias diferentes.
