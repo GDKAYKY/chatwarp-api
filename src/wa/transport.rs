@@ -1,8 +1,14 @@
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use http::Request;
 use tokio::net::TcpStream;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async,
+    tungstenite::{
+        Message,
+        client::IntoClientRequest,
+        http::HeaderValue,
+    },
+};
 
 use crate::wa::error::TransportError;
 
@@ -14,12 +20,16 @@ pub struct WsTransport {
 impl WsTransport {
     /// Connects to a websocket endpoint.
     pub async fn connect(url: &str) -> Result<Self, TransportError> {
-        let request = Request::builder()
-            .uri(url)
-            .header("Origin", "https://web.whatsapp.com")
-            .body(())?;
-
-        let (stream, _) = connect_async(request).await.map_err(TransportError::Connect)?;
+        let (stream, _) = if url.contains("web.whatsapp.com") {
+            let mut request = url.into_client_request().map_err(TransportError::Connect)?;
+            request.headers_mut().insert(
+                "Origin",
+                HeaderValue::from_static("https://web.whatsapp.com"),
+            );
+            connect_async(request).await.map_err(TransportError::Connect)?
+        } else {
+            connect_async(url).await.map_err(TransportError::Connect)?
+        };
 
         Ok(Self { stream })
     }
@@ -68,6 +78,8 @@ impl WsTransport {
                         return Err(TransportError::InvalidFrame("length prefix mismatch"));
                     }
 
+                    // Flush queued control-frame responses (e.g. auto-pong) before returning.
+                    self.stream.flush().await?;
                     return Ok(Bytes::copy_from_slice(payload));
                 }
                 Message::Close(_) => return Err(TransportError::Closed),

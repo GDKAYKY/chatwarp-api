@@ -15,6 +15,7 @@ use tokio::time::{Duration, Instant, timeout};
 
 use crate::{
     error::not_implemented_response,
+    handlers::message::post_message_handler,
     instance::{
         InstanceConfig, InstanceManager,
         error::InstanceError,
@@ -116,6 +117,7 @@ pub fn build_router(state: AppState) -> Router {
             get(connection_state_handler),
         )
         .route("/instance/connect/:name", get(connect_instance_handler))
+        .route("/message/:operation/:instance_name", post(post_message_handler))
         .fallback(not_implemented_handler)
         .with_state(state)
 }

@@ -1,5 +1,7 @@
 pub mod app;
 pub mod db;
+pub mod events;
+pub mod handlers;
 pub mod instance;
 mod config;
 mod error;
