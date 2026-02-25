@@ -2,7 +2,7 @@
 
 API HTTP em Rust para o runtime Direct WA Client (sem sidecar gRPC).
 
-## Estado atual (M0-M2)
+## Estado atual (M0-M4)
 
 Entregue:
 - Bootstrap do crate (`src/lib.rs`) com `run()` funcional.
@@ -16,14 +16,23 @@ Entregue:
   - `noise.rs` (estado Noise + AES-GCM/HKDF)
   - `keys.rs` (keypair X25519)
   - `handshake.rs` + `handshake_proto.rs` (handshake sintético M2)
+  - `binary_node.rs` (codec binário sintético M3)
+  - `auth.rs` + `qr.rs` (estado de auth e geração de QR M4)
+- Persistência M4:
+  - `src/db/auth_repo.rs` (save/load de `AuthState` por instância em PostgreSQL)
+  - `migrations/0001_create_auth_states.sql`
 - Testes offline:
   - `tests/app_test.rs`
   - `tests/transport_test.rs`
   - `tests/noise_test.rs`
   - `tests/handshake_test.rs`
+  - `tests/binary_node_test.rs`
+  - `tests/auth_state_test.rs`
+  - `tests/qr_test.rs`
+  - `tests/auth_repo_test.rs` (`TEST_DATABASE_URL`)
 
 Ainda não entregue:
-- M3+ (`binary_node`, auth persistida, signal e rotas de domínio).
+- M5+ (signal, instance manager, message API e rotas de domínio).
 
 ## Requisitos
 

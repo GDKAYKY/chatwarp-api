@@ -1,6 +1,6 @@
 # ROUTES.md
 
-> Status de rotas HTTP no recorte M0-M2.
+> Status de rotas HTTP no recorte M0-M4.
 
 ## Implementadas
 

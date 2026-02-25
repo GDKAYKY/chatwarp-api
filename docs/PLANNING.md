@@ -11,8 +11,8 @@
 | M0 Bootstrap | ✅ Entregue | Runtime mínimo + fallback 501 |
 | M1 Transport | ✅ Entregue | WebSocket + framing + ping/pong |
 | M2 Noise/Handshake | ✅ Entregue | Noise state + handshake sintético offline |
-| M3 Binary Node | ⏳ Pendente | Próxima fase |
-| M4 Auth/QR/Persistência | ⏳ Pendente | Próxima fase |
+| M3 Binary Node | ✅ Entregue | Codec sintético + fixtures `.bin` |
+| M4 Auth/QR/Persistência | ✅ Entregue | AuthState + QR + repo PostgreSQL |
 | M5 Signal E2E | ⏳ Pendente | Próxima fase |
 | M6 Instance Manager | ⏳ Pendente | Próxima fase |
 | M7 Message API | ⏳ Pendente | Próxima fase |
@@ -22,7 +22,7 @@
 
 ---
 
-## Entregas M0-M2
+## Entregas M0-M4
 
 ### M0 — Bootstrap
 
@@ -60,15 +60,48 @@
 - [x] Testes offline:
   - [x] `tests/noise_test.rs`
   - [x] `tests/handshake_test.rs`
-  - [x] fixtures sintéticas em `tests/fixtures/noise_synthetic/*.bin`
+- [x] fixtures sintéticas em `tests/fixtures/noise_synthetic/*.bin`
+
+### M3 — Binary Node
+
+- [x] `src/wa/binary_node.rs`
+  - [x] `BinaryNode { tag, attrs, content }`
+  - [x] `NodeContent::Nodes | Bytes | Empty`
+  - [x] `decode(&[u8]) -> Result<BinaryNode, BinaryNodeError>`
+  - [x] `encode(&BinaryNode) -> Result<Vec<u8>, BinaryNodeError>`
+  - [x] `SINGLE_BYTE_TOKENS: [&str; 256]` (subset sintético para fase atual)
+- [x] Testes e fixtures:
+  - [x] `tests/binary_node_test.rs`
+  - [x] `tests/fixtures/binary_node_synthetic/message_text.bin`
+  - [x] `tests/fixtures/binary_node_synthetic/nested_items.bin`
+
+### M4 — Auth / QR / Persistência
+
+- [x] `src/wa/auth.rs`
+  - [x] `AuthState::new()`
+  - [x] `IdentityState` separado de `SessionMetadata`
+- [x] `src/wa/keys.rs`
+  - [x] `generate_registration_id() -> u32` (14-bit)
+- [x] `src/wa/qr.rs`
+  - [x] `generate_qr_string(ref, noise_pub, identity_pub, adv_key)`
+  - [x] emissão não bloqueante via `emit_qr_code(...)`
+- [x] `src/db/auth_repo.rs`
+  - [x] `save(instance_name, state)` com upsert
+  - [x] `load(instance_name)`
+- [x] Migração SQL:
+  - [x] `migrations/0001_create_auth_states.sql`
+- [x] Testes:
+  - [x] `tests/auth_state_test.rs`
+  - [x] `tests/qr_test.rs`
+  - [x] `tests/auth_repo_test.rs` (condicional com `TEST_DATABASE_URL`)
 
 ---
 
 ## Observações desta fase
 
-1. O handshake implementado em M2 é sintético e validado offline (mock server).
-2. Não há integração WA real nesta fase.
-3. Fixtures reais de protocolo ficam como requisito para M3.
+1. Noise/handshake continuam sintéticos e validados offline.
+2. Binary node usa token dictionary sintético nesta fase.
+3. Fixtures reais de protocolo (captura WA real/Baileys) seguem como backlog de hardening.
 
 ---
 

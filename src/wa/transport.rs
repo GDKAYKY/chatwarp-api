@@ -73,6 +73,7 @@ impl WsTransport {
                 Message::Close(_) => return Err(TransportError::Closed),
                 Message::Pong(_) => continue,
                 Message::Text(_) => continue,
+                _ => continue,
             }
         }
     }
