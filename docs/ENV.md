@@ -1,62 +1,133 @@
-# Variáveis de Ambiente
+# ENV.md
 
-Abaixo estão as variáveis atualmente consumidas pela implementação Rust.
+> Variáveis de ambiente consumidas pela implementação Rust.
+> Valores sem default são obrigatórios ou ficam desabilitados quando ausentes.
+
+---
 
 ## Server
-- `SERVER_NAME` (default: `evolution`)
-- `SERVER_TYPE` (`http`/`https`, default: `http`)
-- `SERVER_PORT` (default: `8080`)
-- `SERVER_URL`
-- `SERVER_DISABLE_DOCS` (`true`/`false`)
-- `SERVER_DISABLE_MANAGER` (`true`/`false`)
+
+| Variável | Default | Valores |
+|---|---|---|
+| `SERVER_NAME` | `evolution` | string |
+| `SERVER_TYPE` | `http` | `http` / `https` |
+| `SERVER_PORT` | `8080` | número |
+| `SERVER_URL` | — | URL base pública |
+| `SERVER_DISABLE_DOCS` | `false` | `true` / `false` |
+| `SERVER_DISABLE_MANAGER` | `false` | `true` / `false` |
+
+---
 
 ## CORS
-- `CORS_ORIGIN` (csv, default: `*`)
-- `CORS_METHODS` (csv, default: `POST,GET,PUT,DELETE`)
-- `CORS_CREDENTIALS` (`true`/`false`)
+
+| Variável | Default | Valores |
+|---|---|---|
+| `CORS_ORIGIN` | `*` | CSV de origens |
+| `CORS_METHODS` | `POST,GET,PUT,DELETE` | CSV de métodos |
+| `CORS_CREDENTIALS` | — | `true` / `false` |
+
+---
 
 ## TLS
-- `SSL_CONF_PRIVKEY`
-- `SSL_CONF_FULLCHAIN`
 
-## Provider
-- `PROVIDER_ENABLED`
-- `PROVIDER_HOST`
-- `PROVIDER_PORT` (default: `5656`)
-- `PROVIDER_PREFIX` (default: `evolution`)
+Requeridas quando `SERVER_TYPE=https`.
+
+| Variável | Default |
+|---|---|
+| `SSL_CONF_PRIVKEY` | — |
+| `SSL_CONF_FULLCHAIN` | — |
+
+---
 
 ## Database
-- `DATABASE_CONNECTION_URI` (obrigatória)
-- `DATABASE_CONNECTION_CLIENT_NAME` (default: `evolution`)
-- `DATABASE_PROVIDER` (default: `postgresql`)
-- `DATABASE_SAVE_DATA_INSTANCE`
+
+| Variável | Default | Observação |
+|---|---|---|
+| `DATABASE_CONNECTION_URI` | — | **Obrigatória** |
+| `DATABASE_PROVIDER` | `postgresql` | |
+| `DATABASE_CONNECTION_CLIENT_NAME` | `warp` | |
+| `DATABASE_SAVE_DATA_INSTANCE` | — | |
+
+---
 
 ## Auth
-- `AUTHENTICATION_API_KEY` (default: `BQYHJGJHJ`)
-- `AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES`
+
+| Variável | Default | Observação |
+|---|---|---|
+| `AUTHENTICATION_API_KEY` | `BQYHJGJHJ` | Trocar em produção |
+| `AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES` | — | |
+
+---
 
 ## Sidecar gRPC
-- `SIDECAR_GRPC_ENDPOINT` (default: `http://127.0.0.1:50051`)
-- `SIDECAR_CONNECT_TIMEOUT_MS` (default: `3000`)
 
-## Events / Metrics / Observability
-- `WEBHOOK_EVENTS_ERRORS`
-- `WEBHOOK_EVENTS_ERRORS_WEBHOOK`
-- `WEBSOCKET_ENABLED`
-- `WEBSOCKET_GLOBAL_EVENTS`
-- `RABBITMQ_ENABLED`
-- `RABBITMQ_GLOBAL_ENABLED`
-- `RABBITMQ_URI`
-- `RABBITMQ_EXCHANGE_NAME` (default: `evolution_exchange`)
-- `PROMETHEUS_METRICS`
-- `METRICS_AUTH_REQUIRED`
-- `METRICS_USER`
-- `METRICS_PASSWORD`
-- `METRICS_ALLOWED_IPS` (csv de IPs)
-- `SENTRY_DSN`
-- `TELEMETRY_ENABLED` (default efetivo: `true` quando ausente)
+| Variável | Default |
+|---|---|
+| `SIDECAR_GRPC_ENDPOINT` | `http://127.0.0.1:50051` |
+| `SIDECAR_CONNECT_TIMEOUT_MS` | `3000` |
 
-## Facebook (endpoint `/verify-creds`)
-- `FACEBOOK_APP_ID`
-- `FACEBOOK_CONFIG_ID`
-- `FACEBOOK_USER_TOKEN`
+---
+
+## Provider
+
+| Variável | Default |
+|---|---|
+| `PROVIDER_ENABLED` | — |
+| `PROVIDER_HOST` | — |
+| `PROVIDER_PORT` | `5656` |
+| `PROVIDER_PREFIX` | `warp` |
+
+---
+
+## WebSocket
+
+| Variável | Default |
+|---|---|
+| `WEBSOCKET_ENABLED` | — |
+| `WEBSOCKET_GLOBAL_EVENTS` | — |
+
+---
+
+## RabbitMQ
+
+| Variável | Default |
+|---|---|
+| `RABBITMQ_ENABLED` | — |
+| `RABBITMQ_GLOBAL_ENABLED` | — |
+| `RABBITMQ_URI` | — |
+| `RABBITMQ_EXCHANGE_NAME` | `evolution_exchange` |
+
+---
+
+## Prometheus
+
+| Variável | Default |
+|---|---|
+| `PROMETHEUS_METRICS` | — |
+| `METRICS_AUTH_REQUIRED` | — |
+| `METRICS_USER` | — |
+| `METRICS_PASSWORD` | — |
+| `METRICS_ALLOWED_IPS` | — | CSV de IPs |
+
+---
+
+## Observabilidade
+
+| Variável | Default | Observação |
+|---|---|---|
+| `SENTRY_DSN` | — | |
+| `TELEMETRY_ENABLED` | `true` | Ativo por default quando ausente |
+| `WEBHOOK_EVENTS_ERRORS` | — | |
+| `WEBHOOK_EVENTS_ERRORS_WEBHOOK` | — | URL de destino dos erros |
+
+---
+
+## Facebook
+
+Requeridas para o endpoint `POST /verify-creds`.
+
+| Variável | Default |
+|---|---|
+| `FACEBOOK_APP_ID` | — |
+| `FACEBOOK_CONFIG_ID` | — |
+| `FACEBOOK_USER_TOKEN` | — |
