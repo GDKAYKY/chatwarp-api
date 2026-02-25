@@ -46,7 +46,7 @@ async fn unknown_route_returns_not_implemented_payload() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/chat/findMessages/demo")
+                .uri("/chat/unknownRoute/demo")
                 .body(Body::empty())
                 .expect("request build"),
         )

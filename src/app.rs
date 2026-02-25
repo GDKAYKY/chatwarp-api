@@ -5,9 +5,10 @@ use std::sync::{
 
 use axum::{
     Json, Router,
-    extract::{OriginalUri, Path, State},
-    http::StatusCode,
-    response::IntoResponse,
+    extract::{DefaultBodyLimit, OriginalUri, Path, State},
+    http::{HeaderValue, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -15,12 +16,18 @@ use tokio::time::{Duration, Instant, timeout};
 
 use crate::{
     error::not_implemented_response,
-    handlers::message::post_message_handler,
+    group_store::GroupStore,
+    handlers::{
+        chat::{find_chats_handler, find_messages_handler},
+        group::{create_group_handler, fetch_all_groups_handler},
+        message::post_message_handler,
+    },
     instance::{
         InstanceConfig, InstanceManager,
         error::InstanceError,
         handle::ConnectionState,
     },
+    observability::{MetricsSnapshot, RequestMetrics},
     wa::events::Event,
 };
 
@@ -29,14 +36,27 @@ use crate::{
 pub struct AppState {
     ready: Arc<AtomicBool>,
     instance_manager: InstanceManager,
+    group_store: GroupStore,
+    metrics: RequestMetrics,
+    connect_wait_timeout: Duration,
+    max_body_bytes: usize,
 }
 
 impl AppState {
     /// Creates a new app state with readiness disabled.
     pub fn new() -> Self {
+        Self::with_runtime_tuning(Duration::from_millis(300), 256 * 1024)
+    }
+
+    /// Creates state using explicit hardening/timeout tuning.
+    pub fn with_runtime_tuning(connect_wait_timeout: Duration, max_body_bytes: usize) -> Self {
         Self {
             ready: Arc::new(AtomicBool::new(false)),
             instance_manager: InstanceManager::new(),
+            group_store: GroupStore::new(),
+            metrics: RequestMetrics::new(),
+            connect_wait_timeout,
+            max_body_bytes: max_body_bytes.max(1024),
         }
     }
 
@@ -53,6 +73,26 @@ impl AppState {
     /// Returns a clone of the global instance manager.
     pub fn instance_manager(&self) -> InstanceManager {
         self.instance_manager.clone()
+    }
+
+    /// Returns the in-memory group store.
+    pub(crate) fn group_store(&self) -> GroupStore {
+        self.group_store.clone()
+    }
+
+    /// Returns request metrics registry.
+    pub(crate) fn metrics(&self) -> RequestMetrics {
+        self.metrics.clone()
+    }
+
+    /// Returns max wait for QR event while handling connect route.
+    pub(crate) fn connect_wait_timeout(&self) -> Duration {
+        self.connect_wait_timeout
+    }
+
+    /// Returns max accepted request body size in bytes.
+    pub(crate) fn max_body_bytes(&self) -> usize {
+        self.max_body_bytes
     }
 }
 
@@ -106,10 +146,13 @@ struct ApiErrorResponse {
 
 /// Builds the root HTTP router.
 pub fn build_router(state: AppState) -> Router {
+    let body_limit = state.max_body_bytes();
+
     Router::new()
         .route("/", get(root_handler))
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
+        .route("/metrics", get(metrics_handler))
         .route("/instance/create", post(create_instance_handler))
         .route("/instance/delete/:name", delete(delete_instance_handler))
         .route(
@@ -118,7 +161,19 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/instance/connect/:name", get(connect_instance_handler))
         .route("/message/:operation/:instance_name", post(post_message_handler))
+        .route("/chat/findMessages/:instance_name", post(find_messages_handler))
+        .route("/chat/findChats/:instance_name", get(find_chats_handler))
+        .route("/group/create/:instance_name", post(create_group_handler))
+        .route(
+            "/group/fetchAllGroups/:instance_name",
+            get(fetch_all_groups_handler),
+        )
         .fallback(not_implemented_handler)
+        .layer(DefaultBodyLimit::max(body_limit))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            request_observability_middleware,
+        ))
         .with_state(state)
 }
 
@@ -139,6 +194,12 @@ async fn readyz_handler(State(state): State<AppState>) -> impl IntoResponse {
     } else {
         (StatusCode::SERVICE_UNAVAILABLE, Json(HealthResponse { ok: false })).into_response()
     }
+}
+
+async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let instances_total = state.instance_manager().count().await;
+    let snapshot: MetricsSnapshot = state.metrics().snapshot(instances_total);
+    Json(snapshot)
 }
 
 async fn create_instance_handler(
@@ -230,7 +291,7 @@ async fn connect_instance_handler(
         return map_instance_error(error);
     }
 
-    let qr = wait_for_qr_event(&mut events, Duration::from_millis(300)).await;
+    let qr = wait_for_qr_event(&mut events, state.connect_wait_timeout()).await;
 
     let state_after = handle.connection_state().await;
 
@@ -298,4 +359,34 @@ async fn wait_for_qr_event(
 
 async fn not_implemented_handler(uri: OriginalUri) -> impl IntoResponse {
     not_implemented_response(uri.0.path().to_owned())
+}
+
+async fn request_observability_middleware(
+    State(state): State<AppState>,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let metrics = state.metrics();
+    let request_id = metrics.begin_request();
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let started = Instant::now();
+
+    let mut response = next.run(request).await;
+    metrics.end_request(response.status());
+
+    if let Ok(value) = HeaderValue::from_str(&request_id.to_string()) {
+        response.headers_mut().insert("x-request-id", value);
+    }
+
+    tracing::info!(
+        request_id,
+        %method,
+        %path,
+        status = response.status().as_u16(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "http_request"
+    );
+
+    response
 }
