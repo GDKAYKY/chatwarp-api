@@ -1,5 +1,6 @@
 pub mod app;
 pub mod db;
+pub mod instance;
 mod config;
 mod error;
 pub mod wa;
