@@ -17,12 +17,12 @@
 | M6 Instance Manager | ✅ Entregue | Manager + runner + rotas `/instance/*` |
 | M7 Message API | ✅ Entregue | `/message/:operation/:instance_name` + builder sintético |
 | M8 Event Pipeline | ✅ Entregue | dispatcher + webhook/ws/rabbit sintéticos |
-| M9 Rotas chat/group | ⏳ Pendente | Próxima fase |
-| M10 Hardening/Obs | ⏳ Pendente | Próxima fase |
+| M9 Rotas chat/group | ✅ Entregue | Rotas sintéticas de chat/grupo com testes |
+| M10 Hardening/Obs | ✅ Entregue | Request metrics, request-id e body limit |
 
 ---
 
-## Entregas M0-M8
+## Entregas M0-M10
 
 ### M0 — Bootstrap
 
@@ -158,6 +158,32 @@
 - [x] Testes:
   - [x] `tests/events_pipeline_test.rs`
 
+### M9 — Rotas chat/group
+
+- [x] `src/handlers/chat.rs`
+  - [x] `POST /chat/findMessages/:instance_name`
+  - [x] `GET /chat/findChats/:instance_name`
+- [x] `src/handlers/group.rs`
+  - [x] `POST /group/create/:instance_name`
+  - [x] `GET /group/fetchAllGroups/:instance_name`
+- [x] `src/group_store.rs`
+  - [x] store em memória para grupos por instância
+- [x] Testes:
+  - [x] `tests/chat_group_routes_test.rs`
+
+### M10 — Hardening / Observability
+
+- [x] `src/observability.rs`
+  - [x] contadores de requests/2xx/4xx/5xx/inflight
+- [x] Middleware global em `src/app.rs`
+  - [x] cabeçalho `x-request-id`
+  - [x] log estruturado por request
+- [x] `GET /metrics`
+- [x] `DefaultBodyLimit` com tuning por env
+- [x] Timeout de connect QR configurável por env
+- [x] Testes:
+  - [x] `tests/observability_test.rs`
+
 ---
 
 ## Observações desta fase
@@ -168,7 +194,8 @@
 4. Instance M6 usa runner sintético (sem socket WA real).
 5. Message API M7 ainda usa payload binário sintético (não serialização WA real).
 6. Event pipeline M8 usa transports sintéticos (sem integração externa real).
-7. Fixtures reais de protocolo (captura WA real/Baileys) seguem como backlog de hardening.
+7. Chat/group M9 ainda operam sobre payload/estado sintéticos.
+8. Fixtures reais de protocolo (captura WA real/Baileys) seguem como backlog de hardening.
 
 ---
 

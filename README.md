@@ -2,7 +2,7 @@
 
 API HTTP em Rust para o runtime Direct WA Client (sem sidecar gRPC).
 
-## Estado atual (M0-M8)
+## Estado atual (M0-M10)
 
 Entregue:
 - Bootstrap do crate (`src/lib.rs`) com `run()` funcional.
@@ -10,6 +10,7 @@ Entregue:
   - `GET /`
   - `GET /healthz`
   - `GET /readyz`
+  - `GET /metrics`
   - fallback `501` padronizado para rotas não implementadas.
 - Base do protocolo WA em `src/wa/`:
   - `transport.rs` (WebSocket + framing de 3 bytes)
@@ -28,6 +29,14 @@ Entregue:
 - Manager de instâncias M6:
   - `src/instance/` (manager, handle, runner)
   - rotas `/instance/*` no runtime
+- Rotas de domínio M9:
+  - `src/handlers/chat.rs` (`/chat/findMessages/*`, `/chat/findChats/*`)
+  - `src/handlers/group.rs` (`/group/create/*`, `/group/fetchAllGroups/*`)
+  - `src/group_store.rs` (estado sintético em memória por instância)
+- Hardening/Observability M10:
+  - `src/observability.rs` (métricas de request)
+  - middleware com `x-request-id` e logging por request
+  - `DefaultBodyLimit` configurável
 - Persistência M4:
   - `src/db/auth_repo.rs` (save/load de `AuthState` por instância em PostgreSQL)
   - `migrations/0001_create_auth_states.sql`
@@ -45,9 +54,11 @@ Entregue:
   - `tests/instance_routes_test.rs`
   - `tests/message_routes_test.rs`
   - `tests/events_pipeline_test.rs`
+  - `tests/chat_group_routes_test.rs`
+  - `tests/observability_test.rs`
 
 Ainda não entregue:
-- M9+ (rotas de domínio restantes e hardening).
+- integrações reais externas e rotas fora de escopo (`/call/*`, `/settings/*`, etc.).
 
 ## Requisitos
 

@@ -68,6 +68,11 @@ impl InstanceManager {
         self.instances.read().await.get(name).cloned()
     }
 
+    /// Returns the current total number of tracked instances.
+    pub async fn count(&self) -> usize {
+        self.instances.read().await.len()
+    }
+
     /// Deletes an instance and asks its runner to shutdown.
     pub async fn delete(&self, name: &str) -> Result<(), InstanceError> {
         let handle = {
