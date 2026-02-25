@@ -46,7 +46,7 @@ async fn transport_responds_to_ping_with_pong() -> anyhow::Result<()> {
         let next = ws.next().await;
         match next {
             Some(Ok(Message::Pong(bytes))) => {
-                assert_eq!(bytes.as_ref(), &[7, 7, 7]);
+                assert_eq!(&bytes[..], &[7, 7, 7]);
                 Ok(())
             }
             Some(Ok(other)) => anyhow::bail!("expected pong, got {other:?}"),

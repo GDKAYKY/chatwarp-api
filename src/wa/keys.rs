@@ -1,8 +1,9 @@
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
+use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 /// X25519 keypair used in WA handshake and identity primitives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyPair {
     /// Public key bytes.
     pub public: [u8; 32],
@@ -34,4 +35,11 @@ pub fn generate_keypair() -> KeyPair {
         public,
         private: secret.to_bytes(),
     }
+}
+
+/// Generates a 14-bit registration identifier.
+pub fn generate_registration_id() -> u32 {
+    let mut raw = [0_u8; 4];
+    OsRng.fill_bytes(&mut raw);
+    u32::from_le_bytes(raw) & 0x3FFF
 }

@@ -26,6 +26,42 @@ pub enum NoiseError {
     InvalidKeyMaterial,
 }
 
+/// Errors for binary node codec operations.
+#[derive(Debug, Error)]
+pub enum BinaryNodeError {
+    #[error("unexpected end of payload")]
+    UnexpectedEof,
+    #[error("invalid symbol type: {0}")]
+    InvalidSymbolType(u8),
+    #[error("invalid content type: {0}")]
+    InvalidContentType(u8),
+    #[error("invalid utf-8 symbol")]
+    InvalidUtf8,
+    #[error("unknown token index: {0}")]
+    UnknownToken(u8),
+    #[error("symbol exceeds u16 max length")]
+    SymbolTooLong,
+    #[error("payload exceeds u32 max length")]
+    PayloadTooLarge,
+    #[error("too many attributes for a single node")]
+    TooManyAttributes,
+    #[error("too many nested child nodes")]
+    TooManyChildren,
+    #[error("trailing bytes after node decode")]
+    TrailingBytes,
+    #[error("attribute lookup failed during encode")]
+    AttributeLookupFailed,
+}
+
+/// Errors for QR helpers.
+#[derive(Debug, Error)]
+pub enum QrError {
+    #[error("qr channel is full")]
+    ChannelFull,
+    #[error("qr channel is closed")]
+    ChannelClosed,
+}
+
 /// Errors for handshake operations.
 #[derive(Debug, Error)]
 pub enum HandshakeError {
