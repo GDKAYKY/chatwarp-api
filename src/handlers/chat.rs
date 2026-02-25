@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{app::AppState, instance::InstanceError};
 
 #[derive(Debug, Deserialize)]
-struct FindMessagesRequest {
+pub(crate) struct FindMessagesRequest {
     remote_jid: String,
     limit: Option<u16>,
 }
