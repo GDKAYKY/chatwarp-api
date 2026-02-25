@@ -151,8 +151,8 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/", get(root_handler))
-        .route("/docs/swagger", get(swagger_handler))
-        .route("/docs/openapi.json", get(openapi_handler))
+        .route("/swagger", get(swagger_handler))
+        .route("/openapi.json", get(openapi_handler))
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
         .route("/metrics", get(metrics_handler))

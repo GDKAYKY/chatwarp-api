@@ -2,6 +2,22 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Run Application",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "run"
+        ]
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "sourceLanguages": [
+        "rust"
+      ]
+    },
+    {
       "name": "Debug chatwarp-api (bin)",
       "type": "lldb",
       "request": "launch",
@@ -26,7 +42,7 @@
       ]
     },
     {
-      "name": "Debug unit tests (lib)",
+      "name": "Run unit tests (lib)",
       "type": "lldb",
       "request": "launch",
       "cargo": {
