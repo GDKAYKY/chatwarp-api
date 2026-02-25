@@ -1,6 +1,6 @@
 # ROUTES.md
 
-> Status de rotas HTTP no recorte M0-M6.
+> Status de rotas HTTP no recorte M0-M8.
 
 ## Implementadas
 
@@ -12,7 +12,23 @@ POST /instance/create -> 201
 DELETE /instance/delete/:name -> 200
 GET /instance/connectionState/:name -> 200
 GET /instance/connect/:name -> 200
+POST /message/:operation/:instance_name -> 200
 ```
+
+Operações válidas em `:operation`:
+- `sendTemplate`
+- `sendText`
+- `sendMedia`
+- `sendPtv`
+- `sendWhatsAppAudio`
+- `sendStatus`
+- `sendSticker`
+- `sendLocation`
+- `sendContact`
+- `sendReaction`
+- `sendPoll`
+- `sendList`
+- `sendButtons`
 
 ## Fallback padrão
 
@@ -27,11 +43,10 @@ com status HTTP `501 Not Implemented`.
 ## Backlog de rotas
 
 Fora deste recorte:
-- `/message/*`
 - `/call/*`
 - `/chat/*`
 - `/group/*`
 - `/settings/*`
 - integrações (`/webhook/*`, `/websocket/*`, `/rabbitmq/*`, etc.)
 
-Essas rotas serão liberadas a partir dos milestones M7+.
+Essas rotas serão liberadas a partir dos milestones M9+.

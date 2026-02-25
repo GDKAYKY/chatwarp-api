@@ -43,7 +43,12 @@ pub enum InstanceCommand {
     /// Marks instance as connected.
     MarkConnected,
     /// Queues outbound payload.
-    SendMessage(Vec<u8>),
+    SendMessage {
+        /// Message identifier.
+        message_id: String,
+        /// Encoded outbound payload bytes.
+        payload: Vec<u8>,
+    },
     /// Gracefully shuts down the runner.
     Shutdown,
 }

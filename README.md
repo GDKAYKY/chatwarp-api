@@ -2,7 +2,7 @@
 
 API HTTP em Rust para o runtime Direct WA Client (sem sidecar gRPC).
 
-## Estado atual (M0-M6)
+## Estado atual (M0-M8)
 
 Entregue:
 - Bootstrap do crate (`src/lib.rs`) com `run()` funcional.
@@ -19,6 +19,12 @@ Entregue:
   - `binary_node.rs` (codec binário sintético M3)
   - `auth.rs` + `qr.rs` (estado de auth e geração de QR M4)
   - `signal/` (store/session sintéticos M5)
+  - `message.rs` (modelagem e builder sintético M7)
+- Event pipeline M8:
+  - `src/events/dispatcher.rs`
+  - `src/events/webhook.rs`
+  - `src/events/websocket.rs`
+  - `src/events/rabbitmq.rs`
 - Manager de instâncias M6:
   - `src/instance/` (manager, handle, runner)
   - rotas `/instance/*` no runtime
@@ -37,9 +43,11 @@ Entregue:
   - `tests/signal_test.rs`
   - `tests/instance_manager_test.rs`
   - `tests/instance_routes_test.rs`
+  - `tests/message_routes_test.rs`
+  - `tests/events_pipeline_test.rs`
 
 Ainda não entregue:
-- M7+ (message API, event pipeline e rotas de domínio restantes).
+- M9+ (rotas de domínio restantes e hardening).
 
 ## Requisitos
 

@@ -15,14 +15,14 @@
 | M4 Auth/QR/Persistência | ✅ Entregue | AuthState + QR + repo PostgreSQL |
 | M5 Signal E2E | ✅ Entregue | Signal store/session sintéticos |
 | M6 Instance Manager | ✅ Entregue | Manager + runner + rotas `/instance/*` |
-| M7 Message API | ⏳ Pendente | Próxima fase |
-| M8 Event Pipeline | ⏳ Pendente | Próxima fase |
+| M7 Message API | ✅ Entregue | `/message/:operation/:instance_name` + builder sintético |
+| M8 Event Pipeline | ✅ Entregue | dispatcher + webhook/ws/rabbit sintéticos |
 | M9 Rotas chat/group | ⏳ Pendente | Próxima fase |
 | M10 Hardening/Obs | ⏳ Pendente | Próxima fase |
 
 ---
 
-## Entregas M0-M6
+## Entregas M0-M8
 
 ### M0 — Bootstrap
 
@@ -129,6 +129,35 @@
   - [x] `tests/instance_manager_test.rs`
   - [x] `tests/instance_routes_test.rs`
 
+### M7 — Message API
+
+- [x] `src/wa/message.rs`
+  - [x] `OutgoingMessage`
+  - [x] `MessageContent` (Text/Image/Video/Audio/Sticker/Location/Contact/Reaction/Poll/List/Buttons/Template/Status)
+  - [x] validação de operação permitida
+  - [x] `build_message_node(...)`
+- [x] `src/handlers/message.rs`
+  - [x] `POST /message/:operation/:instance_name`
+  - [x] validação de operação
+  - [x] encode para `BinaryNode` e envio via `InstanceHandle`
+  - [x] retorno `{ \"key\": { \"id\": message_id } }`
+- [x] Testes:
+  - [x] `tests/message_routes_test.rs`
+
+### M8 — Event Pipeline
+
+- [x] `src/events/dispatcher.rs`
+  - [x] roteamento por instância para webhook/ws/rabbit
+- [x] `src/events/webhook.rs`
+  - [x] retry com backoff
+  - [x] timeout por tentativa
+- [x] `src/events/websocket.rs`
+  - [x] broadcast para subscribers
+- [x] `src/events/rabbitmq.rs`
+  - [x] publish sintético com routing key `{instance_name}.{event_type}`
+- [x] Testes:
+  - [x] `tests/events_pipeline_test.rs`
+
 ---
 
 ## Observações desta fase
@@ -137,7 +166,9 @@
 2. Binary node usa token dictionary sintético nesta fase.
 3. Signal M5 está sintético (sem `libsignal-client`) para validar interfaces e fluxo.
 4. Instance M6 usa runner sintético (sem socket WA real).
-5. Fixtures reais de protocolo (captura WA real/Baileys) seguem como backlog de hardening.
+5. Message API M7 ainda usa payload binário sintético (não serialização WA real).
+6. Event pipeline M8 usa transports sintéticos (sem integração externa real).
+7. Fixtures reais de protocolo (captura WA real/Baileys) seguem como backlog de hardening.
 
 ---
 

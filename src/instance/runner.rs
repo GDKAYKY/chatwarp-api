@@ -34,11 +34,15 @@ pub async fn run(
                     instance_name: name.clone(),
                 });
             }
-            InstanceCommand::SendMessage(payload) => {
+            InstanceCommand::SendMessage {
+                message_id,
+                payload,
+            } => {
                 let guard = state.read().await;
                 if *guard == ConnectionState::Connected {
                     let _ = event_tx.send(Event::OutboundAck {
                         instance_name: name.clone(),
+                        message_id,
                         bytes: payload.len(),
                     });
                 }

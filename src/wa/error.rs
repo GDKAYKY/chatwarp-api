@@ -73,6 +73,19 @@ pub enum SignalError {
     InvalidCiphertext,
 }
 
+/// Errors for outbound message API and node construction.
+#[derive(Debug, Error)]
+pub enum MessageError {
+    #[error("invalid operation: {0}")]
+    InvalidOperation(String),
+    #[error("invalid content for operation: {operation}")]
+    InvalidContentForOperation { operation: String },
+    #[error("serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error(transparent)]
+    BinaryNode(#[from] BinaryNodeError),
+}
+
 /// Errors for handshake operations.
 #[derive(Debug, Error)]
 pub enum HandshakeError {
