@@ -1,6 +1,6 @@
 # ENV.md
 
-> Variáveis de ambiente consumidas no estado atual do projeto (M0-M4).
+> Variáveis de ambiente consumidas no estado atual do projeto (M0-M6).
 
 ## Runtime
 
@@ -17,5 +17,5 @@
 ## Notas
 
 - `SERVER_PORT` é a única variável lida no runtime atual.
-- O restante das variáveis históricas será reintroduzido conforme M5+.
+- O restante das variáveis históricas será reintroduzido conforme M7+.
 - Não há dependência de sidecar gRPC nesta fase.

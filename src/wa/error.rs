@@ -62,6 +62,17 @@ pub enum QrError {
     ChannelClosed,
 }
 
+/// Errors for synthetic Signal session operations.
+#[derive(Debug, Error)]
+pub enum SignalError {
+    #[error("signal store poisoned: {0}")]
+    StorePoisoned(&'static str),
+    #[error("missing signal session")]
+    MissingSession,
+    #[error("invalid ciphertext payload")]
+    InvalidCiphertext,
+}
+
 /// Errors for handshake operations.
 #[derive(Debug, Error)]
 pub enum HandshakeError {

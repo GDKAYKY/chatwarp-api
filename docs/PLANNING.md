@@ -13,8 +13,8 @@
 | M2 Noise/Handshake | ✅ Entregue | Noise state + handshake sintético offline |
 | M3 Binary Node | ✅ Entregue | Codec sintético + fixtures `.bin` |
 | M4 Auth/QR/Persistência | ✅ Entregue | AuthState + QR + repo PostgreSQL |
-| M5 Signal E2E | ⏳ Pendente | Próxima fase |
-| M6 Instance Manager | ⏳ Pendente | Próxima fase |
+| M5 Signal E2E | ✅ Entregue | Signal store/session sintéticos |
+| M6 Instance Manager | ✅ Entregue | Manager + runner + rotas `/instance/*` |
 | M7 Message API | ⏳ Pendente | Próxima fase |
 | M8 Event Pipeline | ⏳ Pendente | Próxima fase |
 | M9 Rotas chat/group | ⏳ Pendente | Próxima fase |
@@ -22,7 +22,7 @@
 
 ---
 
-## Entregas M0-M4
+## Entregas M0-M6
 
 ### M0 — Bootstrap
 
@@ -95,13 +95,49 @@
   - [x] `tests/qr_test.rs`
   - [x] `tests/auth_repo_test.rs` (condicional com `TEST_DATABASE_URL`)
 
+### M5 — Signal E2E (sintético)
+
+- [x] `src/wa/signal/store.rs`
+  - [x] `trait SignalStore` + traits de composição
+  - [x] `InMemorySignalStore`
+  - [x] Store de identity/prekey/signed-prekey/session
+- [x] `src/wa/signal/session.rs`
+  - [x] `init_session(jid, bundle, store)`
+  - [x] `encrypt(jid, payload, store)`
+  - [x] `decrypt(jid, payload, store)`
+- [x] Testes:
+  - [x] `tests/signal_test.rs`
+
+### M6 — Instance Manager
+
+- [x] `src/instance/mod.rs` — `InstanceManager`
+  - [x] `create(name, config)`
+  - [x] `get(name)`
+  - [x] `delete(name)`
+- [x] `src/instance/handle.rs`
+  - [x] `InstanceHandle` com `tx`, `state`, subscribe de eventos
+  - [x] `ConnectionState` (`Connecting | QrPending | Connected | Disconnected`)
+- [x] `src/instance/runner.rs`
+  - [x] loop de comandos por instância
+  - [x] backoff exponencial com cap (`backoff_seconds`)
+- [x] Rotas `/instance/*` em `src/app.rs`:
+  - [x] `POST /instance/create`
+  - [x] `DELETE /instance/delete/:name`
+  - [x] `GET /instance/connectionState/:name`
+  - [x] `GET /instance/connect/:name`
+- [x] Testes:
+  - [x] `tests/instance_manager_test.rs`
+  - [x] `tests/instance_routes_test.rs`
+
 ---
 
 ## Observações desta fase
 
 1. Noise/handshake continuam sintéticos e validados offline.
 2. Binary node usa token dictionary sintético nesta fase.
-3. Fixtures reais de protocolo (captura WA real/Baileys) seguem como backlog de hardening.
+3. Signal M5 está sintético (sem `libsignal-client`) para validar interfaces e fluxo.
+4. Instance M6 usa runner sintético (sem socket WA real).
+5. Fixtures reais de protocolo (captura WA real/Baileys) seguem como backlog de hardening.
 
 ---
 
