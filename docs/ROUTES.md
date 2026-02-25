@@ -6,6 +6,8 @@
 
 ```text
 GET /         -> 200
+GET /docs/swagger -> 200
+GET /docs/openapi.json -> 200
 GET /healthz  -> 200
 GET /readyz   -> 503 (quando not ready) | 200 (quando ready)
 POST /instance/create -> 201

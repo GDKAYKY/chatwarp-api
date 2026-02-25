@@ -8,6 +8,8 @@ Entregue:
 - Bootstrap do crate (`src/lib.rs`) com `run()` funcional.
 - Runtime Axum mínimo com:
   - `GET /`
+  - `GET /docs/swagger`
+  - `GET /docs/openapi.json`
   - `GET /healthz`
   - `GET /readyz`
   - `GET /metrics`

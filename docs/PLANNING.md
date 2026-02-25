@@ -179,6 +179,9 @@
   - [x] cabeçalho `x-request-id`
   - [x] log estruturado por request
 - [x] `GET /metrics`
+- [x] Swagger/OpenAPI:
+  - [x] `GET /docs/swagger`
+  - [x] `GET /docs/openapi.json`
 - [x] `DefaultBodyLimit` com tuning por env
 - [x] Timeout de connect QR configurável por env
 - [x] Testes:

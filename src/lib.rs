@@ -6,6 +6,7 @@ pub mod instance;
 mod group_store;
 mod config;
 mod error;
+mod openapi;
 mod observability;
 pub mod wa;
 

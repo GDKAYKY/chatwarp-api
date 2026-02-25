@@ -2,14 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "type": "dockerfile",
-      "request": "launch",
-      "name": "Docker: Build",
-      "dockerfile": "Dockerfile",
-      "contextPath": "${workspaceFolder}"
-    },
-    {
-      "name": "Debug chatwarp-api",
+      "name": "Debug chatwarp-api (bin)",
       "type": "lldb",
       "request": "launch",
       "cargo": {
@@ -32,6 +25,59 @@
         "rust"
       ]
     },
-
+    {
+      "name": "Debug unit tests (lib)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "test",
+          "--lib",
+          "--package",
+          "chatwarp-api"
+        ],
+        "filter": {
+          "name": "chatwarp_api",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "sourceLanguages": [
+        "rust"
+      ]
+    },
+    {
+      "name": "Debug integration test: app_test",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "test",
+          "--test",
+          "app_test",
+          "--package",
+          "chatwarp-api"
+        ],
+        "filter": {
+          "name": "app_test",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "sourceLanguages": [
+        "rust"
+      ]
+    },
+    {
+      "type": "dockerfile",
+      "request": "launch",
+      "name": "Docker: Build",
+      "dockerfile": "Dockerfile",
+      "contextPath": "${workspaceFolder}"
+    }
   ]
 }

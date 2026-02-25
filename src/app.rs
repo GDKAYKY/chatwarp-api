@@ -27,6 +27,7 @@ use crate::{
         error::InstanceError,
         handle::ConnectionState,
     },
+    openapi::{openapi_document, swagger_ui},
     observability::{MetricsSnapshot, RequestMetrics},
     wa::events::Event,
 };
@@ -150,6 +151,8 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/", get(root_handler))
+        .route("/docs/swagger", get(swagger_handler))
+        .route("/docs/openapi.json", get(openapi_handler))
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
         .route("/metrics", get(metrics_handler))
@@ -182,6 +185,14 @@ async fn root_handler() -> impl IntoResponse {
         name: "chatwarp-api",
         status: "ok",
     })
+}
+
+async fn swagger_handler() -> impl IntoResponse {
+    swagger_ui()
+}
+
+async fn openapi_handler() -> impl IntoResponse {
+    Json(openapi_document())
 }
 
 async fn healthz_handler() -> impl IntoResponse {

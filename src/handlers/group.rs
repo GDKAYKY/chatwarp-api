@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{app::AppState, group_store::GroupInfo, instance::InstanceError};
 
 #[derive(Debug, Deserialize)]
-struct CreateGroupRequest {
+pub(crate) struct CreateGroupRequest {
     subject: String,
     participants: Vec<String>,
 }
