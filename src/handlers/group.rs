@@ -113,6 +113,14 @@ pub(crate) async fn fetch_all_groups_handler(
 
 fn map_instance_error(error: InstanceError) -> axum::response::Response {
     match error {
+        InstanceError::InvalidName => (
+            StatusCode::BAD_REQUEST,
+            Json(GroupErrorResponse {
+                error: "invalid_instance_name",
+                message: "instance name cannot be empty".to_owned(),
+            }),
+        )
+            .into_response(),
         InstanceError::AlreadyExists => (
             StatusCode::CONFLICT,
             Json(GroupErrorResponse {
@@ -126,6 +134,14 @@ fn map_instance_error(error: InstanceError) -> axum::response::Response {
             Json(GroupErrorResponse {
                 error: "instance_not_found",
                 message: "instance not found".to_owned(),
+            }),
+        )
+            .into_response(),
+        InstanceError::NotConnected => (
+            StatusCode::CONFLICT,
+            Json(GroupErrorResponse {
+                error: "instance_not_connected",
+                message: "instance is not connected".to_owned(),
             }),
         )
             .into_response(),

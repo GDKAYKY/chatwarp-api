@@ -38,8 +38,13 @@ async fn manager_create_connect_delete_flow() -> anyhow::Result<()> {
     let qr_event = tokio::time::timeout(std::time::Duration::from_millis(300), events.recv()).await??;
     assert_eq!(qr_event, chatwarp_api::wa::events::Event::QrCode("qr:alpha:synthetic".to_string()));
 
+    let connected_event = tokio::time::timeout(std::time::Duration::from_millis(300), events.recv()).await??;
+    assert_eq!(connected_event, chatwarp_api::wa::events::Event::Connected {
+        instance_name: "alpha".to_string(),
+    });
+
     let connected_state = handle.connection_state().await;
-    assert_eq!(connected_state, ConnectionState::QrPending);
+    assert_eq!(connected_state, ConnectionState::Connected);
 
     manager.delete("alpha").await?;
     assert!(manager.get("alpha").await.is_none());
