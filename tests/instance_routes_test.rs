@@ -56,3 +56,21 @@ async fn instance_routes_create_connect_state_delete() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn instance_create_rejects_blank_name() -> anyhow::Result<()> {
+    let app = build_router(AppState::new());
+
+    let create_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/instance/create")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"name\":\"   \"}"))?,
+        )
+        .await?;
+
+    assert_eq!(create_response.status(), StatusCode::BAD_REQUEST);
+    Ok(())
+}

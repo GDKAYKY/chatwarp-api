@@ -35,6 +35,7 @@ impl InstanceManager {
 
     /// Creates a new instance and starts its runner task.
     pub async fn create(&self, name: &str, config: InstanceConfig) -> Result<(), InstanceError> {
+        let name = normalize_instance_name(name)?;
         let handle = {
             let mut instances = self.instances.write().await;
             if instances.contains_key(name) {
@@ -46,12 +47,7 @@ impl InstanceManager {
             let state = Arc::new(RwLock::new(ConnectionState::Disconnected));
             let handle = InstanceHandle::new(tx, state.clone(), event_tx.clone());
 
-            tokio::spawn(crate::instance::runner::run(
-                name.to_owned(),
-                state,
-                rx,
-                event_tx,
-            ));
+            tokio::spawn(crate::instance::runner::run(name.to_owned(), state, rx, event_tx));
             instances.insert(name.to_owned(), handle.clone());
             handle
         };
@@ -65,6 +61,11 @@ impl InstanceManager {
 
     /// Returns an instance handle by name.
     pub async fn get(&self, name: &str) -> Option<InstanceHandle> {
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+
         self.instances.read().await.get(name).cloned()
     }
 
@@ -75,6 +76,7 @@ impl InstanceManager {
 
     /// Deletes an instance and asks its runner to shutdown.
     pub async fn delete(&self, name: &str) -> Result<(), InstanceError> {
+        let name = normalize_instance_name(name)?;
         let handle = {
             let mut instances = self.instances.write().await;
             instances.remove(name).ok_or(InstanceError::NotFound)?
@@ -88,4 +90,13 @@ impl InstanceManager {
 
         Ok(())
     }
+}
+
+fn normalize_instance_name(name: &str) -> Result<&str, InstanceError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(InstanceError::InvalidName);
+    }
+
+    Ok(trimmed)
 }

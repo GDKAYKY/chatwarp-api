@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::{
     app::AppState,
-    instance::{InstanceCommand, InstanceError},
+    instance::{ConnectionState, InstanceCommand, InstanceError},
     wa::{
         MessageError,
         binary_node,
@@ -59,6 +59,10 @@ pub async fn post_message_handler(
     let Some(handle) = manager.get(&instance_name).await else {
         return map_instance_error(InstanceError::NotFound).into_axum_response();
     };
+
+    if handle.connection_state().await != ConnectionState::Connected {
+        return map_instance_error(InstanceError::NotConnected).into_axum_response();
+    }
 
     let message_id = generate_message_id();
     let node = match build_message_node(&message_id, operation, &payload, None) {
@@ -146,6 +150,13 @@ impl InstanceErrorHttp {
 
 fn map_instance_error(error: InstanceError) -> InstanceErrorHttp {
     match error {
+        InstanceError::InvalidName => InstanceErrorHttp {
+            status: StatusCode::BAD_REQUEST,
+            body: MessageErrorResponse {
+                error: "invalid_instance_name",
+                message: "instance name cannot be empty".to_owned(),
+            },
+        },
         InstanceError::AlreadyExists => InstanceErrorHttp {
             status: StatusCode::CONFLICT,
             body: MessageErrorResponse {
@@ -158,6 +169,13 @@ fn map_instance_error(error: InstanceError) -> InstanceErrorHttp {
             body: MessageErrorResponse {
                 error: "instance_not_found",
                 message: "instance not found".to_owned(),
+            },
+        },
+        InstanceError::NotConnected => InstanceErrorHttp {
+            status: StatusCode::CONFLICT,
+            body: MessageErrorResponse {
+                error: "instance_not_connected",
+                message: "instance is not connected".to_owned(),
             },
         },
         InstanceError::CommandChannelClosed => InstanceErrorHttp {

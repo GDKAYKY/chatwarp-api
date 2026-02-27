@@ -14,7 +14,7 @@ POST /instance/create -> 201
 DELETE /instance/delete/:name -> 200
 GET /instance/connectionState/:name -> 200
 GET /instance/connect/:name -> 200
-POST /message/:operation/:instance_name -> 200
+POST /message/:operation/:instance_name -> 200 | 409 (instância não conectada)
 POST /chat/findMessages/:instance_name -> 200
 GET /chat/findChats/:instance_name -> 200
 POST /group/create/:instance_name -> 201
@@ -36,6 +36,9 @@ Operações válidas em `:operation`:
 - `sendPoll`
 - `sendList`
 - `sendButtons`
+
+Validações adicionais:
+- `POST /instance/create` retorna `400` quando `name` é vazio/apenas espaços.
 
 ## Fallback padrão
 

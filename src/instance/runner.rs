@@ -73,6 +73,15 @@ async fn connect_flow(
     }
 
     let _ = event_tx.send(Event::QrCode(format!("qr:{name}:synthetic")));
+
+    {
+        let mut guard = state.write().await;
+        *guard = ConnectionState::Connected;
+    }
+
+    let _ = event_tx.send(Event::Connected {
+        instance_name: name.to_owned(),
+    });
 }
 
 /// Returns reconnection delay using capped exponential backoff.

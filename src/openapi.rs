@@ -30,6 +30,70 @@ pub fn openapi_document() -> Value {
             }
           }
         },
+        "/swagger": {
+          "get": {
+            "summary": "Swagger UI",
+            "tags": ["System"],
+            "responses": {
+              "200": {
+                "description": "Swagger HTML page",
+                "content": {
+                  "text/html": {
+                    "schema": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "/docs/swagger": {
+          "get": {
+            "summary": "Swagger UI (alias)",
+            "tags": ["System"],
+            "responses": {
+              "200": {
+                "description": "Swagger HTML page",
+                "content": {
+                  "text/html": {
+                    "schema": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "/openapi.json": {
+          "get": {
+            "summary": "OpenAPI JSON document",
+            "tags": ["System"],
+            "responses": {
+              "200": {
+                "description": "OpenAPI document",
+                "content": {
+                  "application/json": {
+                    "schema": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "/docs/openapi.json": {
+          "get": {
+            "summary": "OpenAPI JSON document (alias)",
+            "tags": ["System"],
+            "responses": {
+              "200": {
+                "description": "OpenAPI document",
+                "content": {
+                  "application/json": {
+                    "schema": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        },
         "/healthz": {
           "get": {
             "summary": "Health probe",
@@ -107,6 +171,14 @@ pub fn openapi_document() -> Value {
                   }
                 }
               },
+              "400": {
+                "description": "Invalid instance name",
+                "content": {
+                  "application/json": {
+                    "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
+                  }
+                }
+              },
               "409": {
                 "description": "Instance already exists",
                 "content": {
@@ -137,6 +209,14 @@ pub fn openapi_document() -> Value {
                 "content": {
                   "application/json": {
                     "schema": { "$ref": "#/components/schemas/InstanceOkResponse" }
+                  }
+                }
+              },
+              "400": {
+                "description": "Invalid instance name",
+                "content": {
+                  "application/json": {
+                    "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
                   }
                 }
               },
@@ -234,8 +314,25 @@ pub fn openapi_document() -> Value {
                 "name": "operation",
                 "in": "path",
                 "required": true,
-                "schema": { "type": "string", "enum": ["sendText"] },
-                "description": "Message operation type"
+                "description": "Message operation type",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "sendTemplate",
+                    "sendText",
+                    "sendMedia",
+                    "sendPtv",
+                    "sendWhatsAppAudio",
+                    "sendStatus",
+                    "sendSticker",
+                    "sendLocation",
+                    "sendContact",
+                    "sendReaction",
+                    "sendPoll",
+                    "sendList",
+                    "sendButtons"
+                  ]
+                }
               },
               {
                 "name": "instance_name",
@@ -249,7 +346,7 @@ pub fn openapi_document() -> Value {
               "required": true,
               "content": {
                 "application/json": {
-                  "schema": { "$ref": "#/components/schemas/SendMessageRequest" }
+                  "schema": { "$ref": "#/components/schemas/OutgoingMessage" }
                 }
               }
             },
@@ -258,7 +355,7 @@ pub fn openapi_document() -> Value {
                 "description": "Message sent",
                 "content": {
                   "application/json": {
-                    "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                    "schema": { "$ref": "#/components/schemas/MessagePostResponse" }
                   }
                 }
               },
@@ -272,6 +369,30 @@ pub fn openapi_document() -> Value {
               },
               "404": {
                 "description": "Instance not found",
+                "content": {
+                  "application/json": {
+                    "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
+                  }
+                }
+              },
+              "409": {
+                "description": "Instance not connected",
+                "content": {
+                  "application/json": {
+                    "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
+                  }
+                }
+              },
+              "500": {
+                "description": "Binary node encoding error",
+                "content": {
+                  "application/json": {
+                    "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
+                  }
+                }
+              },
+              "503": {
+                "description": "Instance unavailable",
                 "content": {
                   "application/json": {
                     "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
@@ -308,6 +429,14 @@ pub fn openapi_document() -> Value {
                 "content": {
                   "application/json": {
                     "schema": { "$ref": "#/components/schemas/FindMessagesResponse" }
+                  }
+                }
+              },
+              "400": {
+                "description": "Invalid request",
+                "content": {
+                  "application/json": {
+                    "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
                   }
                 }
               },
@@ -381,7 +510,15 @@ pub fn openapi_document() -> Value {
                 "description": "Group created",
                 "content": {
                   "application/json": {
-                    "schema": { "$ref": "#/components/schemas/GroupInfo" }
+                    "schema": { "$ref": "#/components/schemas/GroupCreateResponse" }
+                  }
+                }
+              },
+              "400": {
+                "description": "Invalid group payload",
+                "content": {
+                  "application/json": {
+                    "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
                   }
                 }
               },
@@ -414,10 +551,7 @@ pub fn openapi_document() -> Value {
                 "description": "Groups list",
                 "content": {
                   "application/json": {
-                    "schema": {
-                      "type": "array",
-                      "items": { "$ref": "#/components/schemas/GroupInfo" }
-                    }
+                    "schema": { "$ref": "#/components/schemas/GroupListResponse" }
                   }
                 }
               },
@@ -451,11 +585,14 @@ pub fn openapi_document() -> Value {
           "MetricsSnapshot": {
             "type": "object",
             "properties": {
-              "requests_total": { "type": "integer", "example": 42 },
-              "requests_2xx": { "type": "integer", "example": 38 },
-              "requests_4xx": { "type": "integer", "example": 3 },
-              "requests_5xx": { "type": "integer", "example": 1 },
-              "instances_total": { "type": "integer", "example": 2 }
+              "uptime_seconds": { "type": "integer", "example": 42 },
+              "instances_total": { "type": "integer", "example": 2 },
+              "requests_total": { "type": "integer", "example": 100 },
+              "inflight_requests": { "type": "integer", "example": 1 },
+              "responses_2xx": { "type": "integer", "example": 95 },
+              "responses_4xx": { "type": "integer", "example": 3 },
+              "responses_5xx": { "type": "integer", "example": 2 },
+              "responses_other": { "type": "integer", "example": 0 }
             }
           },
           "CreateInstanceRequest": {
@@ -477,52 +614,72 @@ pub fn openapi_document() -> Value {
             "type": "object",
             "properties": {
               "instance": { "type": "string", "example": "my-instance" },
-              "state": { "type": "string", "enum": ["disconnected", "connecting", "connected"], "example": "connected" }
+              "state": {
+                "type": "string",
+                "enum": ["Connecting", "QrPending", "Connected", "Disconnected"],
+                "example": "Connected"
+              }
             }
           },
           "ConnectResponse": {
             "type": "object",
             "properties": {
               "instance": { "type": "string", "example": "my-instance" },
-              "state": { "type": "string", "example": "connecting" },
-              "qr": { "type": "string", "nullable": true, "example": "2@abc123..." }
+              "state": {
+                "type": "string",
+                "enum": ["Connecting", "QrPending", "Connected", "Disconnected"],
+                "example": "Connected"
+              },
+              "qr": { "type": "string", "nullable": true, "example": "qr:my-instance:synthetic" }
             }
           },
-          "SendMessageRequest": {
+          "OutgoingMessage": {
             "type": "object",
-            "required": ["to", "text"],
+            "required": ["to", "content"],
             "properties": {
               "to": { "type": "string", "example": "5511999999999@s.whatsapp.net" },
-              "text": { "type": "string", "example": "Hello World" }
+              "content": {
+                "type": "object",
+                "description": "Payload tipado de mensagem. Deve combinar com :operation.",
+                "additionalProperties": true,
+                "example": { "type": "text", "text": "Hello World" }
+              }
             }
           },
-          "MessageResponse": {
+          "MessagePostResponse": {
             "type": "object",
             "properties": {
-              "status": { "type": "string", "example": "sent" },
-              "message_id": { "type": "string", "example": "msg-123" }
+              "key": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string", "example": "msg-1772217584011-f3087c0c" }
+                }
+              }
             }
           },
           "FindMessagesRequest": {
             "type": "object",
-            "required": ["chat_id"],
+            "required": ["remote_jid"],
             "properties": {
-              "chat_id": { "type": "string", "example": "5511999999999@s.whatsapp.net" },
-              "limit": { "type": "integer", "example": 50 }
+              "remote_jid": { "type": "string", "example": "5511999999999@s.whatsapp.net" },
+              "limit": { "type": "integer", "minimum": 1, "maximum": 100, "example": 20 }
             }
           },
           "FindMessagesResponse": {
             "type": "object",
             "properties": {
+              "instance": { "type": "string", "example": "my-instance" },
+              "remote_jid": { "type": "string", "example": "5511999999999@s.whatsapp.net" },
+              "count": { "type": "integer", "example": 2 },
               "messages": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
-                    "id": { "type": "string" },
-                    "from": { "type": "string" },
-                    "text": { "type": "string" },
-                    "timestamp": { "type": "integer" }
+                    "id": { "type": "string", "example": "my-instance-0000" },
+                    "from_me": { "type": "boolean", "example": true },
+                    "body": { "type": "string", "example": "synthetic message #0 for 5511999999999@s.whatsapp.net" },
+                    "timestamp": { "type": "integer", "example": 1772217584 }
                   }
                 }
               }
@@ -531,14 +688,15 @@ pub fn openapi_document() -> Value {
           "FindChatsResponse": {
             "type": "object",
             "properties": {
+              "instance": { "type": "string", "example": "my-instance" },
               "chats": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
-                    "id": { "type": "string" },
-                    "name": { "type": "string" },
-                    "last_message_time": { "type": "integer" }
+                    "jid": { "type": "string", "example": "111@s.whatsapp.net" },
+                    "name": { "type": "string", "example": "Synthetic Contact" },
+                    "unread": { "type": "integer", "example": 0 }
                   }
                 }
               }
@@ -566,7 +724,25 @@ pub fn openapi_document() -> Value {
                 "items": { "type": "string" },
                 "example": ["5511999999999@s.whatsapp.net"]
               },
-              "created_at": { "type": "integer", "example": 1704067200 }
+              "created_at": { "type": "integer", "example": 1772217584 }
+            }
+          },
+          "GroupCreateResponse": {
+            "type": "object",
+            "properties": {
+              "instance": { "type": "string", "example": "my-instance" },
+              "group": { "$ref": "#/components/schemas/GroupInfo" },
+              "status": { "type": "string", "example": "created" }
+            }
+          },
+          "GroupListResponse": {
+            "type": "object",
+            "properties": {
+              "instance": { "type": "string", "example": "my-instance" },
+              "groups": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/GroupInfo" }
+              }
             }
           },
           "ApiErrorResponse": {
@@ -581,7 +757,7 @@ pub fn openapi_document() -> Value {
     })
 }
 
-/// Returns Swagger UI HTML page bound to `/docs/openapi.json`.
+/// Returns Swagger UI HTML page bound to `/openapi.json`.
 pub fn swagger_ui() -> Html<&'static str> {
     Html(include_str!("swagger_ui.html"))
 }

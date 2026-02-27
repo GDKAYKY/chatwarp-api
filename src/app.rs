@@ -25,7 +25,7 @@ use crate::{
     instance::{
         InstanceConfig, InstanceManager,
         error::InstanceError,
-        handle::ConnectionState,
+        handle::{ConnectionState, InstanceHandle},
     },
     openapi::{openapi_document, swagger_ui},
     observability::{MetricsSnapshot, RequestMetrics},
@@ -153,6 +153,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/", get(root_handler))
         .route("/swagger", get(swagger_handler))
         .route("/openapi.json", get(openapi_handler))
+        .route("/docs/swagger", get(swagger_handler))
+        .route("/docs/openapi.json", get(openapi_handler))
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
         .route("/metrics", get(metrics_handler))
@@ -218,15 +220,16 @@ async fn create_instance_handler(
     Json(request): Json<CreateInstanceRequest>,
 ) -> impl IntoResponse {
     let manager = state.instance_manager();
+    let instance_name = request.name.trim().to_owned();
     let config = InstanceConfig {
         auto_connect: request.auto_connect.unwrap_or(false),
     };
 
-    match manager.create(&request.name, config).await {
+    match manager.create(&instance_name, config).await {
         Ok(()) => (
             StatusCode::CREATED,
             Json(InstanceOkResponse {
-                instance: request.name,
+                instance: instance_name,
                 status: "created",
             }),
         )
@@ -304,7 +307,7 @@ async fn connect_instance_handler(
 
     let qr = wait_for_qr_event(&mut events, state.connect_wait_timeout()).await;
 
-    let state_after = handle.connection_state().await;
+    let state_after = wait_for_connected_state(&handle, state.connect_wait_timeout()).await;
 
     (
         StatusCode::OK,
@@ -319,6 +322,14 @@ async fn connect_instance_handler(
 
 fn map_instance_error(error: InstanceError) -> axum::response::Response {
     match error {
+        InstanceError::InvalidName => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResponse {
+                error: "invalid_instance_name",
+                message: "instance name cannot be empty".to_owned(),
+            }),
+        )
+            .into_response(),
         InstanceError::AlreadyExists => (
             StatusCode::CONFLICT,
             Json(ApiErrorResponse {
@@ -332,6 +343,14 @@ fn map_instance_error(error: InstanceError) -> axum::response::Response {
             Json(ApiErrorResponse {
                 error: "instance_not_found",
                 message: "instance not found".to_owned(),
+            }),
+        )
+            .into_response(),
+        InstanceError::NotConnected => (
+            StatusCode::CONFLICT,
+            Json(ApiErrorResponse {
+                error: "instance_not_connected",
+                message: "instance is not connected".to_owned(),
             }),
         )
             .into_response(),
@@ -365,6 +384,23 @@ async fn wait_for_qr_event(
             Ok(Err(_)) => return None,
             Err(_) => return None,
         }
+    }
+}
+
+async fn wait_for_connected_state(handle: &InstanceHandle, max_wait: Duration) -> ConnectionState {
+    let deadline = Instant::now() + max_wait;
+
+    loop {
+        let current = handle.connection_state().await;
+        if current == ConnectionState::Connected {
+            return current;
+        }
+
+        if Instant::now() >= deadline {
+            return current;
+        }
+
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
 
