@@ -60,7 +60,7 @@ pub async fn start_mock_wa_server(
 
         let mut encoded_server_hello = Vec::new();
         server_hello.encode(&mut encoded_server_hello)?;
-        ws.send(WsMessage::Binary(frame_payload(&encoded_server_hello).into()))
+        ws.send(WsMessage::Binary(encoded_server_hello.into()))
             .await?;
 
         let dh2 = diffie_hellman(server_static.private, client_ephemeral);
@@ -72,33 +72,56 @@ pub async fn start_mock_wa_server(
         let ad2 = noise.handshake_hash();
         let _decrypted_client_static = noise.decrypt_with_ad(&client_finish.encrypted_static, &ad2)?;
 
-        let server_payload = HandshakeMessage {
-            client_ephemeral: Vec::new(),
-            server_ephemeral: Vec::new(),
-            encrypted_static: Vec::new(),
-            payload: Vec::new(),
-            qr_reference,
-            login_jid: login_jid.clone(),
+        let server_finish_payload = if let Some(reference) = qr_reference {
+            let ref_node = BinaryNode {
+                tag: "ref".to_owned(),
+                attrs: HashMap::new(),
+                content: NodeContent::Bytes(reference.into_bytes().into()),
+            };
+            encode(&ref_node)?
+        } else if let Some(jid) = login_jid.clone() {
+            let mut pair_success_attrs = HashMap::new();
+            pair_success_attrs.insert("jid".to_owned(), jid);
+            let pair_success = BinaryNode {
+                tag: "pair-success".to_owned(),
+                attrs: pair_success_attrs,
+                content: NodeContent::Empty,
+            };
+            let node = BinaryNode {
+                tag: "iq".to_owned(),
+                attrs: HashMap::new(),
+                content: NodeContent::Nodes(vec![pair_success]),
+            };
+            encode(&node)?
+        } else {
+            Vec::new()
         };
-        let mut encoded_server_payload = Vec::new();
-        server_payload.encode(&mut encoded_server_payload)?;
-        ws.send(WsMessage::Binary(frame_payload(&encoded_server_payload).into()))
+
+        let ad3 = noise.handshake_hash();
+        let encrypted_server_finish = noise.encrypt_with_ad(&server_finish_payload, &ad3)?;
+        ws.send(WsMessage::Binary(encrypted_server_finish.into()))
             .await?;
 
         if send_success {
-            let mut attrs = HashMap::new();
-            attrs.insert(
+            let mut pair_success_attrs = HashMap::new();
+            pair_success_attrs.insert(
                 "jid".to_owned(),
                 login_jid.unwrap_or_else(|| "5511999999999@s.whatsapp.net".to_owned()),
             );
-            let node = BinaryNode {
-                tag: "success".to_owned(),
-                attrs,
+            let pair_success = BinaryNode {
+                tag: "pair-success".to_owned(),
+                attrs: pair_success_attrs,
                 content: NodeContent::Empty,
             };
+
+            let node = BinaryNode {
+                tag: "iq".to_owned(),
+                attrs: HashMap::new(),
+                content: NodeContent::Nodes(vec![pair_success]),
+            };
             let encoded_node = encode(&node)?;
-            let ad3 = noise.handshake_hash();
-            let encrypted_success = noise.encrypt_with_ad(&encoded_node, &ad3)?;
+            let ad4 = noise.handshake_hash();
+            let encrypted_success = noise.encrypt_with_ad(&encoded_node, &ad4)?;
             ws.send(WsMessage::Binary(frame_payload(&encrypted_success).into()))
                 .await?;
         }

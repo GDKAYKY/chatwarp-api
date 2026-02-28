@@ -3,7 +3,8 @@ use serde_json::Value;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::wa::{
-    error::HandshakeError,
+    binary_node::{self, NodeContent},
+    error::{HandshakeError, NoiseError},
     handshake_proto::HandshakeMessage,
     keys::{KeyPair, generate_keypair},
     noise::NoiseState,
@@ -49,8 +50,8 @@ pub async fn do_handshake(
     client_hello.encode(&mut encoded_hello)?;
     transport.send_frame(&encoded_hello).await?;
 
-    let server_hello_frame = transport.next_frame().await?;
-    let server_hello = HandshakeMessage::decode(server_hello_frame)?;
+    let server_hello_frame = transport.next_raw_frame().await?;
+    let server_hello = decode_server_hello_frame(&server_hello_frame)?;
 
     let server_ephemeral = fixed_key(&server_hello.server_ephemeral, "server_ephemeral")?;
     noise.mix_hash(&server_ephemeral);
@@ -81,18 +82,17 @@ pub async fn do_handshake(
     client_finish.encode(&mut encoded_finish)?;
     transport.send_frame(&encoded_finish).await?;
 
-    let server_payload_frame = transport.next_frame().await?;
-    let server_payload = HandshakeMessage::decode(server_payload_frame)?;
-    let qr_reference = server_payload
-        .qr_reference
-        .clone()
-        .or_else(|| parse_qr_reference(&server_payload.payload));
+    // Handshake transitions to encrypted Noise transport after client finish.
+    let server_finish_frame = transport.next_raw_frame().await?;
+    let decrypted = decrypt_server_finish_frame(&mut noise, &server_finish_frame)?;
+    let qr_reference =
+        extract_qr_reference_from_node(&decrypted).or_else(|| parse_qr_reference(&decrypted));
 
     Ok(HandshakeOutcome {
         noise,
         qr_reference,
-        server_payload: server_payload.payload,
-        login_jid: server_payload.login_jid,
+        server_payload: decrypted,
+        login_jid: None,
         noise_public: ephemeral.public,
     })
 }
@@ -138,4 +138,99 @@ fn parse_qr_reference(payload: &[u8]) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn extract_qr_reference_from_node(payload: &[u8]) -> Option<String> {
+    let node = binary_node::decode(payload).ok()?;
+
+    if node.tag == "ref" {
+        if let NodeContent::Bytes(bytes) = &node.content {
+            return std::str::from_utf8(bytes)
+                .ok()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+        }
+    }
+
+    node.attrs
+        .get("ref")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn decode_server_hello_frame(frame: &[u8]) -> Result<HandshakeMessage, HandshakeError> {
+    match HandshakeMessage::decode(frame) {
+        Ok(message) => Ok(message),
+        Err(raw_error) => {
+            if let Some(payload) = maybe_unframe(frame) {
+                return HandshakeMessage::decode(payload).map_err(HandshakeError::Decode);
+            }
+            if frame.len() > 3 {
+                if let Ok(message) = HandshakeMessage::decode(&frame[3..]) {
+                    return Ok(message);
+                }
+            }
+            tracing::debug!(
+                frame_len = frame.len(),
+                frame_head = %preview_hex(frame, 24),
+                "server_hello raw decode failed"
+            );
+            Err(HandshakeError::Decode(raw_error))
+        }
+    }
+}
+
+fn decrypt_server_finish_frame(
+    noise: &mut NoiseState,
+    frame: &[u8],
+) -> Result<Vec<u8>, HandshakeError> {
+    let ad = noise.handshake_hash();
+
+    // Try raw first because WA may deliver handshake payload directly in websocket binary frames.
+    let mut raw_noise = noise.clone();
+    if let Ok(decrypted) = raw_noise.decrypt_with_ad(frame, &ad) {
+        *noise = raw_noise;
+        return Ok(decrypted);
+    }
+
+    // Fallback for deployments where the same payload still carries a 3-byte frame prefix.
+    if let Some(payload) = maybe_unframe(frame) {
+        let mut framed_noise = noise.clone();
+        if let Ok(decrypted) = framed_noise.decrypt_with_ad(payload, &ad) {
+            *noise = framed_noise;
+            return Ok(decrypted);
+        }
+    }
+
+    Err(HandshakeError::Noise(NoiseError::Cipher))
+}
+
+fn maybe_unframe(raw: &[u8]) -> Option<&[u8]> {
+    if raw.len() < 3 {
+        return None;
+    }
+
+    let expected_len = ((raw[0] as usize) << 16) | ((raw[1] as usize) << 8) | raw[2] as usize;
+    let payload = &raw[3..];
+    if payload.len() >= expected_len {
+        return Some(&payload[..expected_len]);
+    }
+
+    None
+}
+
+fn preview_hex(bytes: &[u8], max_len: usize) -> String {
+    let take = bytes.len().min(max_len);
+    let mut out = String::with_capacity((take * 3).saturating_sub(1));
+    for (index, byte) in bytes[..take].iter().enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }

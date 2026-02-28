@@ -3,8 +3,10 @@ use std::{
     time::Duration,
 };
 
-use prost::Message;
-use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio::{
+    sync::{RwLock, broadcast, mpsc},
+    time::Instant,
+};
 
 use crate::{
     db::auth_store::AuthStore,
@@ -13,9 +15,9 @@ use crate::{
         NoiseState,
         auth::{AuthState, MeInfo},
         binary_node,
+        error::NoiseError,
         events::Event,
         handshake::do_handshake,
-        handshake_proto::HandshakeMessage,
         qr::generate_qr_string,
         transport::WsTransport,
     },
@@ -27,9 +29,12 @@ struct RunnerSession {
     noise: Option<NoiseState>,
     auth: Option<AuthState>,
     awaiting_login: bool,
+    login_deadline: Option<Instant>,
     reconnect_attempt: u32,
     auto_reconnect: bool,
 }
+
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Main task loop for a single instance.
 pub async fn run(
@@ -64,7 +69,7 @@ pub async fn run(
                         break;
                     }
                 }
-                frame = transport.next_frame() => {
+                frame = transport.next_raw_frame() => {
                     session.transport = Some(transport);
                     match frame {
                         Ok(frame) => {
@@ -105,6 +110,26 @@ pub async fn run(
                                 ).await;
                             }
                         }
+                    }
+                }
+                _ = async {
+                    if let Some(deadline) = session.login_deadline {
+                        tokio::time::sleep_until(deadline).await;
+                    }
+                }, if session.awaiting_login && session.login_deadline.is_some() => {
+                    session.transport = Some(transport);
+                    tracing::warn!(instance = name, timeout_secs = LOGIN_TIMEOUT.as_secs(), "login timeout waiting for pair-success jid");
+                    force_disconnected(&name, &state, &event_tx, &mut session, "login_timeout").await;
+                    if session.auto_reconnect {
+                        establish_connection(
+                            &name,
+                            &state,
+                            &event_tx,
+                            &auth_store,
+                            &wa_ws_url,
+                            &mut session,
+                            true,
+                        ).await;
                     }
                 }
             }
@@ -234,6 +259,7 @@ async fn establish_connection(
                 return;
             }
             Err(error) => {
+                tracing::warn!(instance = %name, error = %error, "connect_once failed");
                 force_disconnected(name, state, event_tx, session, &error).await;
                 session.reconnect_attempt = session.reconnect_attempt.saturating_add(1);
                 should_sleep = true;
@@ -272,7 +298,8 @@ async fn connect_once(
     session.transport = Some(transport);
     session.noise = Some(outcome.noise);
     session.auth = Some(auth.clone());
-    session.awaiting_login = false;
+    session.awaiting_login = true;
+    session.login_deadline = Some(Instant::now() + LOGIN_TIMEOUT);
 
     if let Some(reference) = outcome.qr_reference {
         {
@@ -293,7 +320,7 @@ async fn connect_once(
 
     if let Some(jid) = outcome
         .login_jid
-        .or_else(|| extract_login_jid(&outcome.server_payload))
+        .or_else(|| extract_login_jid_from_payload(&outcome.server_payload))
     {
         auth.metadata.me = Some(MeInfo {
             jid,
@@ -301,10 +328,7 @@ async fn connect_once(
         });
         session.auth = Some(auth);
         session.awaiting_login = false;
-        mark_connected(name, state, event_tx, auth_store, session)
-            .await
-            .map_err(|error| format!("save_auth_failed: {error}"))?;
-    } else if !session.awaiting_login {
+        session.login_deadline = None;
         mark_connected(name, state, event_tx, auth_store, session)
             .await
             .map_err(|error| format!("save_auth_failed: {error}"))?;
@@ -343,13 +367,26 @@ async fn handle_incoming_frame(
         return Err("missing_noise_state".to_owned());
     };
 
-    let ad = noise.handshake_hash();
-    let decrypted = noise
-        .decrypt_with_ad(frame, &ad)
+    tracing::debug!(
+        instance = name,
+        frame_len = frame.len(),
+        frame_head = %preview_hex(frame, 24),
+        "received websocket binary frame"
+    );
+
+    let decrypted = decrypt_incoming_payload(noise, frame)
         .map_err(|error| format!("noise_decrypt_failed: {error}"))?;
 
     if session.awaiting_login {
-        if let Some(jid) = extract_login_jid(&decrypted) {
+        let node = match binary_node::decode(&decrypted) {
+            Ok(node) => node,
+            Err(error) => {
+                tracing::warn!(instance = name, error = %error, "binary_node decode failed, ignoring frame");
+                return Ok(());
+            }
+        };
+
+        if let Some(jid) = extract_login_jid(&node) {
             if let Some(auth) = session.auth.as_mut() {
                 auth.metadata.me = Some(MeInfo {
                     jid,
@@ -357,6 +394,7 @@ async fn handle_incoming_frame(
                 });
             }
             session.awaiting_login = false;
+            session.login_deadline = None;
             mark_connected(name, state, event_tx, auth_store, session)
                 .await
                 .map_err(|error| format!("save_auth_failed: {error}"))?;
@@ -369,6 +407,28 @@ async fn handle_incoming_frame(
     }
 
     Ok(())
+}
+
+fn decrypt_incoming_payload(noise: &mut NoiseState, raw_frame: &[u8]) -> Result<Vec<u8>, NoiseError> {
+    let ad = noise.handshake_hash();
+
+    // Try raw first: some peers deliver encrypted payload directly in the websocket binary message.
+    let mut raw_noise = noise.clone();
+    if let Ok(decrypted) = raw_noise.decrypt_with_ad(raw_frame, &ad) {
+        *noise = raw_noise;
+        return Ok(decrypted);
+    }
+
+    // Fallback for peers that still prepend a WA 3-byte frame header.
+    if let Some(payload) = maybe_unframe(raw_frame) {
+        let mut framed_noise = noise.clone();
+        if let Ok(decrypted) = framed_noise.decrypt_with_ad(payload, &ad) {
+            *noise = framed_noise;
+            return Ok(decrypted);
+        }
+    }
+
+    Err(NoiseError::Cipher)
 }
 
 async fn mark_connected(
@@ -408,6 +468,7 @@ async fn force_disconnected(
     session.transport = None;
     session.noise = None;
     session.awaiting_login = false;
+    session.login_deadline = None;
     {
         let mut guard = state.write().await;
         *guard = ConnectionState::Disconnected;
@@ -418,49 +479,27 @@ async fn force_disconnected(
     });
 }
 
-fn extract_login_jid(payload: &[u8]) -> Option<String> {
-    if let Ok(node) = binary_node::decode(payload) {
-        if node.tag == "success" || node.tag == "connected" {
-            if let Some(jid) = node.attrs.get("jid") {
-                let trimmed = jid.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_owned());
-                }
-            }
-            return Some("unknown@s.whatsapp.net".to_owned());
-        }
+fn extract_login_jid(node: &binary_node::BinaryNode) -> Option<String> {
+    if node.tag != "iq" {
+        return None;
     }
 
-    if let Ok(message) = HandshakeMessage::decode(payload) {
-        if let Some(jid) = message.login_jid {
-            let trimmed = jid.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_owned());
-            }
-        }
+    let binary_node::NodeContent::Nodes(children) = &node.content else {
+        return None;
+    };
+
+    let pair = children.iter().find(|child| child.tag == "pair-success")?;
+    let jid = pair.attrs.get("jid")?.trim();
+    if jid.is_empty() {
+        return None;
     }
 
-    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(payload) {
-        if let Some(jid) = value.get("jid").and_then(serde_json::Value::as_str) {
-            let trimmed = jid.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_owned());
-            }
-        }
-        if let Some(event) = value.get("event").and_then(serde_json::Value::as_str) {
-            if event == "success" {
-                return Some("unknown@s.whatsapp.net".to_owned());
-            }
-        }
-    }
+    Some(jid.to_owned())
+}
 
-    std::str::from_utf8(payload).ok().and_then(|value| {
-        if value.contains("success") {
-            Some("unknown@s.whatsapp.net".to_owned())
-        } else {
-            None
-        }
-    })
+fn extract_login_jid_from_payload(payload: &[u8]) -> Option<String> {
+    let node = binary_node::decode(payload).ok()?;
+    extract_login_jid(&node)
 }
 
 fn is_failure_payload(payload: &[u8]) -> bool {
@@ -471,6 +510,34 @@ fn is_failure_payload(payload: &[u8]) -> bool {
     std::str::from_utf8(payload)
         .map(|raw| raw.contains("failure"))
         .unwrap_or(false)
+}
+
+fn maybe_unframe(raw: &[u8]) -> Option<&[u8]> {
+    if raw.len() < 3 {
+        return None;
+    }
+
+    let expected_len = ((raw[0] as usize) << 16) | ((raw[1] as usize) << 8) | raw[2] as usize;
+    let payload = &raw[3..];
+
+    if payload.len() < expected_len {
+        return None;
+    }
+
+    Some(&payload[..expected_len])
+}
+
+fn preview_hex(bytes: &[u8], max_len: usize) -> String {
+    let take = bytes.len().min(max_len);
+    let mut out = String::with_capacity((take * 3).saturating_sub(1));
+    for (index, byte) in bytes[..take].iter().enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 /// Returns reconnection delay using capped exponential backoff.
