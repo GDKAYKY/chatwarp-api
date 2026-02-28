@@ -11,6 +11,10 @@ pub struct Config {
     pub instance_connect_wait_ms: u64,
     /// Max HTTP request body size in KiB.
     pub server_body_limit_kb: usize,
+    /// Database URL used by runtime auth persistence.
+    pub database_url: String,
+    /// Websocket endpoint used for WA transport.
+    pub wa_ws_url: String,
 }
 
 impl Config {
@@ -33,10 +37,16 @@ impl Config {
             Err(_) => 256,
         };
 
+        let database_url = std::env::var("DATABASE_URL").map_err(|_| ConfigError::MissingDatabaseUrl)?;
+        let wa_ws_url = std::env::var("WA_WS_URL")
+            .unwrap_or_else(|_| "wss://web.whatsapp.com/ws/chat".to_owned());
+
         Ok(Self {
             bind_addr: SocketAddr::from(([0, 0, 0, 0], port)),
             instance_connect_wait_ms,
             server_body_limit_kb,
+            database_url,
+            wa_ws_url,
         })
     }
 }
@@ -50,4 +60,6 @@ pub enum ConfigError {
     InvalidConnectWait(String),
     #[error("invalid SERVER_BODY_LIMIT_KB value: {0}")]
     InvalidBodyLimit(String),
+    #[error("missing DATABASE_URL environment variable")]
+    MissingDatabaseUrl,
 }

@@ -9,7 +9,13 @@ use std::{
 
 use tokio::sync::{RwLock, broadcast, mpsc};
 
-use crate::wa::events::Event;
+use crate::{
+    db::auth_store::{
+        AuthStore,
+        InMemoryAuthStore,
+    },
+    wa::events::Event,
+};
 
 pub use error::InstanceError;
 pub use handle::{ConnectionState, InstanceCommand, InstanceHandle};
@@ -22,15 +28,31 @@ pub struct InstanceConfig {
 }
 
 /// In-memory manager for multiple WA instances.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct InstanceManager {
     instances: Arc<RwLock<HashMap<String, InstanceHandle>>>,
+    auth_store: Arc<dyn AuthStore>,
+    wa_ws_url: String,
 }
 
 impl InstanceManager {
+    const DEFAULT_WA_WS_URL: &'static str = "wss://web.whatsapp.com/ws/chat";
+
     /// Creates a new empty manager.
     pub fn new() -> Self {
-        Self::default()
+        Self::new_with_runtime(
+            Arc::new(InMemoryAuthStore::new()),
+            Self::DEFAULT_WA_WS_URL.to_owned(),
+        )
+    }
+
+    /// Creates a manager with explicit auth store and ws endpoint.
+    pub fn new_with_runtime(auth_store: Arc<dyn AuthStore>, wa_ws_url: String) -> Self {
+        Self {
+            instances: Arc::new(RwLock::new(HashMap::new())),
+            auth_store,
+            wa_ws_url,
+        }
     }
 
     /// Creates a new instance and starts its runner task.
@@ -47,7 +69,14 @@ impl InstanceManager {
             let state = Arc::new(RwLock::new(ConnectionState::Disconnected));
             let handle = InstanceHandle::new(tx, state.clone(), event_tx.clone());
 
-            tokio::spawn(crate::instance::runner::run(name.to_owned(), state, rx, event_tx));
+            tokio::spawn(crate::instance::runner::run(
+                name.to_owned(),
+                state,
+                rx,
+                event_tx,
+                self.auth_store.clone(),
+                self.wa_ws_url.clone(),
+            ));
             instances.insert(name.to_owned(), handle.clone());
             handle
         };
@@ -89,6 +118,12 @@ impl InstanceManager {
             .map_err(|_| InstanceError::CommandChannelClosed)?;
 
         Ok(())
+    }
+}
+
+impl Default for InstanceManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

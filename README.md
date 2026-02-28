@@ -69,6 +69,7 @@ Ainda não entregue:
 ## Execução local
 
 ```bash
+export DATABASE_URL=postgres://user:pass@localhost:5432/chatwarp
 cargo run
 ```
 

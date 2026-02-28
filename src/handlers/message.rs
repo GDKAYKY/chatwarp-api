@@ -55,6 +55,17 @@ pub async fn post_message_handler(
         return map_message_error(error);
     }
 
+    if operation != MessageOperation::SendText {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(MessageErrorResponse {
+                error: "not_implemented",
+                message: format!("{} nao implementado nesta versao", operation.as_str()),
+            }),
+        )
+            .into_response();
+    }
+
     let manager = state.instance_manager();
     let Some(handle) = manager.get(&instance_name).await else {
         return map_instance_error(InstanceError::NotFound).into_axum_response();

@@ -307,7 +307,7 @@ pub fn openapi_document() -> Value {
         },
         "/message/{operation}/{instance_name}": {
           "post": {
-            "summary": "Send message",
+            "summary": "Send message (sendText real; others 501)",
             "tags": ["Message"],
             "parameters": [
               {
@@ -377,6 +377,14 @@ pub fn openapi_document() -> Value {
               },
               "409": {
                 "description": "Instance not connected",
+                "content": {
+                  "application/json": {
+                    "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
+                  }
+                }
+              },
+              "501": {
+                "description": "Operation not implemented in this release",
                 "content": {
                   "application/json": {
                     "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
@@ -630,7 +638,7 @@ pub fn openapi_document() -> Value {
                 "enum": ["Connecting", "QrPending", "Connected", "Disconnected"],
                 "example": "Connected"
               },
-              "qr": { "type": "string", "nullable": true, "example": "qr:my-instance:synthetic" }
+              "qr": { "type": "string", "nullable": true, "example": "2@ref,BASE64_NOISE_PUB,BASE64_IDENTITY_PUB,BASE64_ADV_KEY" }
             }
           },
           "OutgoingMessage": {
