@@ -51,9 +51,22 @@ impl AppState {
 
     /// Creates state using explicit hardening/timeout tuning.
     pub fn with_runtime_tuning(connect_wait_timeout: Duration, max_body_bytes: usize) -> Self {
+        Self::with_instance_manager(
+            connect_wait_timeout,
+            max_body_bytes,
+            InstanceManager::new(),
+        )
+    }
+
+    /// Creates state using explicit tuning and provided instance manager.
+    pub fn with_instance_manager(
+        connect_wait_timeout: Duration,
+        max_body_bytes: usize,
+        instance_manager: InstanceManager,
+    ) -> Self {
         Self {
             ready: Arc::new(AtomicBool::new(false)),
-            instance_manager: InstanceManager::new(),
+            instance_manager,
             group_store: GroupStore::new(),
             metrics: RequestMetrics::new(),
             connect_wait_timeout,

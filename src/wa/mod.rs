@@ -21,7 +21,7 @@ pub use error::{
     SignalError,
     TransportError,
 };
-pub use handshake::do_handshake;
+pub use handshake::{HandshakeOutcome, do_handshake};
 pub use keys::{KeyPair, generate_keypair, generate_registration_id};
 pub use message::{MessageContent, MessageOperation, OutgoingMessage, build_message_node};
 pub use noise::NoiseState;

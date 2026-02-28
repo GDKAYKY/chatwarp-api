@@ -1,26 +1,37 @@
-mod common;
+#![allow(dead_code)]
+
+use std::collections::HashMap;
 
 use futures::{SinkExt, StreamExt};
 use prost::Message;
-use tokio_tungstenite::{WebSocketStream, tungstenite::Message as WsMessage};
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::Message as WsMessage,
+};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use chatwarp_api::wa::{
-    handshake::do_handshake,
+    binary_node::{BinaryNode, NodeContent, encode},
     handshake_proto::HandshakeMessage,
     keys::generate_keypair,
     noise::NoiseState,
-    transport::WsTransport,
     types::WA_NOISE_PROLOGUE,
 };
-use common::ws_mock::start_single_client_server;
 
-#[tokio::test]
-async fn handshake_converges_to_shared_noise_state() -> anyhow::Result<()> {
-    let client_static = generate_keypair();
-    let expected_client_public = client_static.public;
+use super::ws_mock::{
+    WsTestServer,
+    start_single_client_server,
+};
 
-    let server = start_single_client_server(move |mut ws| async move {
+pub async fn start_mock_wa_server(
+    qr_reference: Option<&str>,
+    login_jid: Option<&str>,
+    send_success: bool,
+) -> anyhow::Result<WsTestServer> {
+    let qr_reference = qr_reference.map(ToOwned::to_owned);
+    let login_jid = login_jid.map(ToOwned::to_owned);
+
+    start_single_client_server(move |mut ws| async move {
         let server_static = generate_keypair();
         let server_ephemeral = generate_keypair();
         let mut noise = NoiseState::new(WA_NOISE_PROLOGUE);
@@ -59,44 +70,57 @@ async fn handshake_converges_to_shared_noise_state() -> anyhow::Result<()> {
         let client_finish = HandshakeMessage::decode(unframe(&client_finish_raw)?.as_slice())?;
 
         let ad2 = noise.handshake_hash();
-        let decrypted_client_static = noise.decrypt_with_ad(&client_finish.encrypted_static, &ad2)?;
-        assert_eq!(decrypted_client_static, expected_client_public);
+        let _decrypted_client_static = noise.decrypt_with_ad(&client_finish.encrypted_static, &ad2)?;
 
-        let post_handshake = HandshakeMessage {
+        let server_payload = HandshakeMessage {
             client_ephemeral: Vec::new(),
             server_ephemeral: Vec::new(),
             encrypted_static: Vec::new(),
             payload: Vec::new(),
-            qr_reference: Some("2@test-reference".to_owned()),
-            login_jid: None,
+            qr_reference,
+            login_jid: login_jid.clone(),
         };
-        let mut encoded_post_handshake = Vec::new();
-        post_handshake.encode(&mut encoded_post_handshake)?;
-        ws.send(WsMessage::Binary(frame_payload(&encoded_post_handshake).into()))
+        let mut encoded_server_payload = Vec::new();
+        server_payload.encode(&mut encoded_server_payload)?;
+        ws.send(WsMessage::Binary(frame_payload(&encoded_server_payload).into()))
             .await?;
 
-        let ad3 = noise.handshake_hash();
-        let encrypted_payload = noise.encrypt_with_ad(b"server-proof", &ad3)?;
-        ws.send(WsMessage::Binary(frame_payload(&encrypted_payload).into()))
-            .await?;
+        if send_success {
+            let mut attrs = HashMap::new();
+            attrs.insert(
+                "jid".to_owned(),
+                login_jid.unwrap_or_else(|| "5511999999999@s.whatsapp.net".to_owned()),
+            );
+            let node = BinaryNode {
+                tag: "success".to_owned(),
+                attrs,
+                content: NodeContent::Empty,
+            };
+            let encoded_node = encode(&node)?;
+            let ad3 = noise.handshake_hash();
+            let encrypted_success = noise.encrypt_with_ad(&encoded_node, &ad3)?;
+            ws.send(WsMessage::Binary(frame_payload(&encrypted_success).into()))
+                .await?;
+        }
+
+        while let Some(next) = ws.next().await {
+            let message = match next {
+                Ok(message) => message,
+                Err(_) => break,
+            };
+
+            match message {
+                WsMessage::Close(_) => break,
+                WsMessage::Ping(payload) => {
+                    ws.send(WsMessage::Pong(payload)).await?;
+                }
+                _ => {}
+            }
+        }
 
         Ok(())
     })
-    .await?;
-
-    let mut transport = WsTransport::connect(&server.url).await?;
-    let outcome = do_handshake(&mut transport, &client_static).await?;
-    assert_eq!(outcome.qr_reference.as_deref(), Some("2@test-reference"));
-    let mut client_noise = outcome.noise;
-
-    let encrypted_server_payload = transport.next_frame().await?;
-    let ad = client_noise.handshake_hash();
-    let decrypted = client_noise.decrypt_with_ad(&encrypted_server_payload, &ad)?;
-
-    assert_eq!(decrypted, b"server-proof");
-
-    server.finish().await?;
-    Ok(())
+    .await
 }
 
 fn fixed_key(input: &[u8], label: &'static str) -> anyhow::Result<[u8; 32]> {

@@ -1,14 +1,40 @@
+mod common;
+
+use std::{
+    sync::Arc,
+    time::Duration,
+};
+
 use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
 use tower::ServiceExt;
 
-use chatwarp_api::app::{AppState, build_router};
+use chatwarp_api::{
+    app::{AppState, build_router},
+    db::auth_store::InMemoryAuthStore,
+    instance::InstanceManager,
+};
+use common::wa_mock::start_mock_wa_server;
 
 #[tokio::test]
 async fn instance_routes_create_connect_state_delete() -> anyhow::Result<()> {
-    let app = build_router(AppState::new());
+    let server = start_mock_wa_server(
+        Some("2@instance-routes"),
+        Some("5511888888888@s.whatsapp.net"),
+        true,
+    )
+    .await?;
+    let manager = InstanceManager::new_with_runtime(
+        Arc::new(InMemoryAuthStore::new()),
+        server.url.clone(),
+    );
+    let app = build_router(AppState::with_instance_manager(
+        Duration::from_millis(300),
+        256 * 1024,
+        manager,
+    ));
 
     let create_response = app
         .clone()
@@ -53,6 +79,7 @@ async fn instance_routes_create_connect_state_delete() -> anyhow::Result<()> {
         )
         .await?;
     assert_eq!(delete_response.status(), StatusCode::OK);
+    server.finish().await?;
 
     Ok(())
 }

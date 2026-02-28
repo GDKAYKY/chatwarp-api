@@ -9,4 +9,8 @@ pub struct HandshakeMessage {
     pub encrypted_static: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "4")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, optional, tag = "5")]
+    pub qr_reference: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "6")]
+    pub login_jid: ::core::option::Option<::prost::alloc::string::String>,
 }
