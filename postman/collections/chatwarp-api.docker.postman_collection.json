@@ -1,0 +1,415 @@
+{
+  "info": {
+    "_postman_id": "75cb4f6f-3faf-4db0-9f34-b9c43d7775f7",
+    "name": "chatwarp-api (Docker)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Service",
+      "item": [
+        {
+          "name": "GET /",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const requestId = pm.response.headers.get('x-request-id');",
+                  "if (requestId) pm.environment.set('last_request_id', requestId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /healthz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('health response has ok=true', function () {",
+                  "  pm.expect(body.ok).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/readyz"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 503', function () {",
+                  "  pm.expect([200, 503]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/metrics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Instance",
+      "item": [
+        {
+          "name": "POST /instance/create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{instance_name}}\",\n  \"auto_connect\": false\n}"
+            },
+            "url": "{{base_url}}/instance/create"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201 or 409', function () {",
+                  "  pm.expect([201, 409]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "try {",
+                  "  const body = pm.response.json();",
+                  "  if (body.instance) pm.environment.set('instance_name', body.instance);",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /instance/connect/:name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/instance/connect/{{instance_name}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "try {",
+                  "  const body = pm.response.json();",
+                  "  if (body.qr) pm.environment.set('last_qr', body.qr);",
+                  "  if (body.state) pm.environment.set('last_connection_state', body.state);",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /instance/connectionState/:name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/instance/connectionState/{{instance_name}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "try {",
+                  "  const body = pm.response.json();",
+                  "  if (body.state) pm.environment.set('last_connection_state', body.state);",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /instance/delete/:name",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base_url}}/instance/delete/{{instance_name}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Messaging",
+      "item": [
+        {
+          "name": "POST /message/sendText/:instance_name",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to\": \"{{to_jid}}\",\n  \"content\": {\n    \"type\": \"text\",\n    \"text\": \"{{message_text}}\"\n  }\n}"
+            },
+            "url": "{{base_url}}/message/sendText/{{instance_name}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 409', function () {",
+                  "  pm.expect([200, 409]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.key && body.key.id) pm.environment.set('last_message_id', body.key.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "POST /chat/findMessages/:instance_name",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"remote_jid\": \"{{remote_jid}}\",\n  \"limit\": 20\n}"
+            },
+            "url": "{{base_url}}/chat/findMessages/{{instance_name}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /chat/findChats/:instance_name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/chat/findChats/{{instance_name}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Group",
+      "item": [
+        {
+          "name": "POST /group/create/:instance_name",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"{{group_subject}}\",\n  \"participants\": [\n    \"{{participant_1}}\",\n    \"{{participant_2}}\"\n  ]\n}"
+            },
+            "url": "{{base_url}}/group/create/{{instance_name}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /group/fetchAllGroups/:instance_name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/group/fetchAllGroups/{{instance_name}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "event": [],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://chatwarp-api:8080",
+      "type": "string"
+    },
+    {
+      "key": "instance_name",
+      "value": "wa1",
+      "type": "string"
+    },
+    {
+      "key": "to_jid",
+      "value": "5511999999999@s.whatsapp.net",
+      "type": "string"
+    },
+    {
+      "key": "message_text",
+      "value": "hello from postman",
+      "type": "string"
+    },
+    {
+      "key": "remote_jid",
+      "value": "5511999999999@s.whatsapp.net",
+      "type": "string"
+    },
+    {
+      "key": "group_subject",
+      "value": "Postman Group",
+      "type": "string"
+    },
+    {
+      "key": "participant_1",
+      "value": "5511888888888@s.whatsapp.net",
+      "type": "string"
+    },
+    {
+      "key": "participant_2",
+      "value": "5511777777777@s.whatsapp.net",
+      "type": "string"
+    }
+  ]
+}

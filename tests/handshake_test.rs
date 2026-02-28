@@ -49,7 +49,7 @@ async fn handshake_converges_to_shared_noise_state() -> anyhow::Result<()> {
 
         let mut encoded_server_hello = Vec::new();
         server_hello.encode(&mut encoded_server_hello)?;
-        ws.send(WsMessage::Binary(frame_payload(&encoded_server_hello).into()))
+        ws.send(WsMessage::Binary(encoded_server_hello.into()))
             .await?;
 
         let dh2 = diffie_hellman(server_static.private, client_ephemeral);
@@ -62,21 +62,13 @@ async fn handshake_converges_to_shared_noise_state() -> anyhow::Result<()> {
         let decrypted_client_static = noise.decrypt_with_ad(&client_finish.encrypted_static, &ad2)?;
         assert_eq!(decrypted_client_static, expected_client_public);
 
-        let post_handshake = HandshakeMessage {
-            client_ephemeral: Vec::new(),
-            server_ephemeral: Vec::new(),
-            encrypted_static: Vec::new(),
-            payload: Vec::new(),
-            qr_reference: Some("2@test-reference".to_owned()),
-            login_jid: None,
-        };
-        let mut encoded_post_handshake = Vec::new();
-        post_handshake.encode(&mut encoded_post_handshake)?;
-        ws.send(WsMessage::Binary(frame_payload(&encoded_post_handshake).into()))
+        let ad3 = noise.handshake_hash();
+        let encrypted_server_finish = noise.encrypt_with_ad(b"2@test-reference", &ad3)?;
+        ws.send(WsMessage::Binary(encrypted_server_finish.into()))
             .await?;
 
-        let ad3 = noise.handshake_hash();
-        let encrypted_payload = noise.encrypt_with_ad(b"server-proof", &ad3)?;
+        let ad4 = noise.handshake_hash();
+        let encrypted_payload = noise.encrypt_with_ad(b"server-proof", &ad4)?;
         ws.send(WsMessage::Binary(frame_payload(&encrypted_payload).into()))
             .await?;
 
@@ -94,6 +86,82 @@ async fn handshake_converges_to_shared_noise_state() -> anyhow::Result<()> {
     let decrypted = client_noise.decrypt_with_ad(&encrypted_server_payload, &ad)?;
 
     assert_eq!(decrypted, b"server-proof");
+
+    server.finish().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn handshake_accepts_framed_server_handshake_messages() -> anyhow::Result<()> {
+    let client_static = generate_keypair();
+    let expected_client_public = client_static.public;
+
+    let server = start_single_client_server(move |mut ws| async move {
+        let server_static = generate_keypair();
+        let server_ephemeral = generate_keypair();
+        let mut noise = NoiseState::new(WA_NOISE_PROLOGUE);
+
+        let client_hello_raw = read_binary(&mut ws).await?;
+        let client_hello = HandshakeMessage::decode(unframe(&client_hello_raw)?.as_slice())?;
+
+        let client_ephemeral = fixed_key(&client_hello.client_ephemeral, "client_ephemeral")?;
+        noise.mix_hash(&client_ephemeral);
+        noise.mix_hash(&server_ephemeral.public);
+
+        let dh1 = diffie_hellman(server_ephemeral.private, client_ephemeral);
+        noise.mix_into_key(&dh1);
+
+        let ad1 = noise.handshake_hash();
+        let encrypted_server_static = noise.encrypt_with_ad(&server_static.public, &ad1)?;
+
+        let server_hello = HandshakeMessage {
+            client_ephemeral: Vec::new(),
+            server_ephemeral: server_ephemeral.public.to_vec(),
+            encrypted_static: encrypted_server_static,
+            payload: Vec::new(),
+            qr_reference: None,
+            login_jid: None,
+        };
+
+        let mut encoded_server_hello = Vec::new();
+        server_hello.encode(&mut encoded_server_hello)?;
+        ws.send(WsMessage::Binary(frame_payload(&encoded_server_hello).into()))
+            .await?;
+
+        let dh2 = diffie_hellman(server_static.private, client_ephemeral);
+        noise.mix_into_key(&dh2);
+
+        let client_finish_raw = read_binary(&mut ws).await?;
+        let client_finish = HandshakeMessage::decode(unframe(&client_finish_raw)?.as_slice())?;
+
+        let ad2 = noise.handshake_hash();
+        let decrypted_client_static = noise.decrypt_with_ad(&client_finish.encrypted_static, &ad2)?;
+        assert_eq!(decrypted_client_static, expected_client_public);
+
+        let ad3 = noise.handshake_hash();
+        let encrypted_server_finish = noise.encrypt_with_ad(b"2@test-reference-framed", &ad3)?;
+        ws.send(WsMessage::Binary(frame_payload(&encrypted_server_finish).into()))
+            .await?;
+
+        let ad4 = noise.handshake_hash();
+        let encrypted_payload = noise.encrypt_with_ad(b"server-proof-framed", &ad4)?;
+        ws.send(WsMessage::Binary(frame_payload(&encrypted_payload).into()))
+            .await?;
+
+        Ok(())
+    })
+    .await?;
+
+    let mut transport = WsTransport::connect(&server.url).await?;
+    let outcome = do_handshake(&mut transport, &client_static).await?;
+    assert_eq!(outcome.qr_reference.as_deref(), Some("2@test-reference-framed"));
+    let mut client_noise = outcome.noise;
+
+    let encrypted_server_payload = transport.next_frame().await?;
+    let ad = client_noise.handshake_hash();
+    let decrypted = client_noise.decrypt_with_ad(&encrypted_server_payload, &ad)?;
+
+    assert_eq!(decrypted, b"server-proof-framed");
 
     server.finish().await?;
     Ok(())

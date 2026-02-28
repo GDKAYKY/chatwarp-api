@@ -1,0 +1,15 @@
+{
+  "workspace": {
+    "id": "a5b554d0-804d-4563-aadc-3cbe28548ca9"
+  },
+  "entities": {
+    "environments": [],
+    "flows": [],
+    "globals": [],
+    "mocks": [],
+    "specs": [
+      "..\\proto\\whatsapp_v2.proto"
+    ],
+    "collections": []
+  }
+}
