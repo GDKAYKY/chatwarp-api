@@ -275,7 +275,9 @@ fn build_client_payload(auth: &AuthState, version: WaWebVersion) -> Result<wa::C
         }),
         mcc: "000".to_owned(),
         mnc: "000".to_owned(),
-        os_version: browser.os_version.clone(),
+        // Baileys uses a fixed "0.1" `osVersion` here; the real OS
+        // version is carried separately in DeviceProps during registration.
+        os_version: "0.1".to_owned(),
         manufacturer: String::new(),
         device: "Desktop".to_owned(),
         os_build_number: "0.1".to_owned(),
@@ -285,11 +287,8 @@ fn build_client_payload(auth: &AuthState, version: WaWebVersion) -> Result<wa::C
         locale_country_iso_3166_1_alpha_2: locale_country.to_owned(),
     };
 
-    let web_sub_platform = match browser.os.as_str() {
-        "Mac OS" => wa::client_payload::web_info::WebSubPlatform::Darwin as i32,
-        "Windows" => wa::client_payload::web_info::WebSubPlatform::Win32 as i32,
-        _ => wa::client_payload::web_info::WebSubPlatform::WebBrowser as i32,
-    };
+    // Align with Baileys: default to WEB_BROWSER sub-platform for MD clients.
+    let web_sub_platform = wa::client_payload::web_info::WebSubPlatform::WebBrowser as i32;
 
     let mut payload = wa::ClientPayload {
         username: 0,
@@ -342,7 +341,8 @@ fn build_registration_payload(
             quinary: 0,
         }),
         platform_type: wa::device_props::PlatformType::Chrome as i32,
-        require_full_sync: false,
+        // Baileys' default config enables full history sync for MD clients.
+        require_full_sync: true,
         history_sync_config: Some(default_history_sync_config()),
     };
     let mut encoded_device_props = Vec::new();

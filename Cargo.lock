@@ -248,6 +248,7 @@ dependencies = [
  "ed25519-dalek",
  "flate2",
  "futures",
+ "hex",
  "hkdf",
  "http",
  "md5",

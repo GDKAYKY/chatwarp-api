@@ -1,3 +1,8 @@
+---
+description: 
+alwaysApply: true
+---
+
 # AGENTS.md
 
 > Instruções para agentes de codificação (Codex, GitHub Copilot).
