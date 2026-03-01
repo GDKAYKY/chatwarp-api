@@ -266,7 +266,7 @@ pub fn openapi_document() -> Value {
         },
         "/instance/connect/{name}": {
           "get": {
-            "summary": "Connect instance and get QR code",
+            "summary": "Start async instance connection flow",
             "tags": ["Instance"],
             "parameters": [
               {
@@ -279,7 +279,7 @@ pub fn openapi_document() -> Value {
             ],
             "responses": {
               "200": {
-                "description": "Connection initiated",
+                "description": "Connect command accepted",
                 "content": {
                   "application/json": {
                     "schema": { "$ref": "#/components/schemas/ConnectResponse" }
@@ -293,9 +293,34 @@ pub fn openapi_document() -> Value {
                     "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
                   }
                 }
+              }
+            }
+          }
+        },
+        "/instance/{name}/state": {
+          "get": {
+            "summary": "Get full instance runtime state",
+            "tags": ["Instance"],
+            "parameters": [
+              {
+                "name": "name",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string" },
+                "description": "Instance name"
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "Current runtime status snapshot",
+                "content": {
+                  "application/json": {
+                    "schema": { "$ref": "#/components/schemas/InstanceStateResponse" }
+                  }
+                }
               },
-              "409": {
-                "description": "Already connected",
+              "404": {
+                "description": "Instance not found",
                 "content": {
                   "application/json": {
                     "schema": { "$ref": "#/components/schemas/ApiErrorResponse" }
@@ -631,14 +656,48 @@ pub fn openapi_document() -> Value {
           },
           "ConnectResponse": {
             "type": "object",
+            "required": ["status"],
             "properties": {
-              "instance": { "type": "string", "example": "my-instance" },
+              "status": {
+                "type": "string",
+                "example": "connecting"
+              },
+              "qrcode": {
+                "allOf": [{ "$ref": "#/components/schemas/QrCodeResponse" }],
+                "nullable": true
+              }
+            }
+          },
+          "InstanceStateResponse": {
+            "type": "object",
+            "required": ["state", "connected"],
+            "properties": {
               "state": {
                 "type": "string",
-                "enum": ["Connecting", "QrPending", "Connected", "Disconnected"],
-                "example": "Connected"
+                "enum": ["connecting", "qr_pending", "connected", "disconnected"],
+                "example": "qr_pending"
               },
-              "qr": { "type": "string", "nullable": true, "example": "2@ref,BASE64_NOISE_PUB,BASE64_IDENTITY_PUB,BASE64_ADV_KEY" }
+              "qr": {
+                "type": "string",
+                "nullable": true,
+                "example": "2@ref,BASE64_NOISE_PUB,BASE64_IDENTITY_PUB,BASE64_ADV_KEY"
+              },
+              "qrcode": {
+                "allOf": [{ "$ref": "#/components/schemas/QrCodeResponse" }],
+                "nullable": true
+              },
+              "connected": { "type": "boolean", "example": false },
+              "last_error": { "type": "string", "nullable": true, "example": "transport_error: closed with code 1006" }
+            }
+          },
+          "QrCodeResponse": {
+            "type": "object",
+            "required": ["count", "code"],
+            "properties": {
+              "count": { "type": "integer", "example": 1 },
+              "pairingCode": { "type": "string", "nullable": true, "example": null },
+              "code": { "type": "string", "example": "2@ref,BASE64_NOISE_PUB,BASE64_IDENTITY_PUB,BASE64_ADV_KEY" },
+              "base64": { "type": "string", "nullable": true, "example": "data:image/svg+xml;base64,PHN2Zy4uLjwvc3ZnPg==" }
             }
           },
           "OutgoingMessage": {

@@ -2,6 +2,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::Instant;
 
 use axum::{
     Json, Router,
@@ -12,7 +13,7 @@ use axum::{
     routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
-use tokio::time::{Duration, Instant, timeout};
+use tokio::time::{Duration, sleep};
 
 use crate::{
     error::not_implemented_response,
@@ -25,11 +26,10 @@ use crate::{
     instance::{
         InstanceConfig, InstanceManager,
         error::InstanceError,
-        handle::{ConnectionState, InstanceHandle},
+        handle::ConnectionState,
     },
     openapi::{openapi_document, swagger_ui},
     observability::{MetricsSnapshot, RequestMetrics},
-    wa::events::Event,
 };
 
 /// Shared application state.
@@ -39,28 +39,22 @@ pub struct AppState {
     instance_manager: InstanceManager,
     group_store: GroupStore,
     metrics: RequestMetrics,
-    connect_wait_timeout: Duration,
     max_body_bytes: usize,
 }
 
 impl AppState {
     /// Creates a new app state with readiness disabled.
     pub fn new() -> Self {
-        Self::with_runtime_tuning(Duration::from_millis(300), 256 * 1024)
+        Self::with_runtime_tuning(256 * 1024)
     }
 
-    /// Creates state using explicit hardening/timeout tuning.
-    pub fn with_runtime_tuning(connect_wait_timeout: Duration, max_body_bytes: usize) -> Self {
-        Self::with_instance_manager(
-            connect_wait_timeout,
-            max_body_bytes,
-            InstanceManager::new(),
-        )
+    /// Creates state using explicit hardening tuning.
+    pub fn with_runtime_tuning(max_body_bytes: usize) -> Self {
+        Self::with_instance_manager(max_body_bytes, InstanceManager::new())
     }
 
     /// Creates state using explicit tuning and provided instance manager.
     pub fn with_instance_manager(
-        connect_wait_timeout: Duration,
         max_body_bytes: usize,
         instance_manager: InstanceManager,
     ) -> Self {
@@ -69,7 +63,6 @@ impl AppState {
             instance_manager,
             group_store: GroupStore::new(),
             metrics: RequestMetrics::new(),
-            connect_wait_timeout,
             max_body_bytes: max_body_bytes.max(1024),
         }
     }
@@ -97,11 +90,6 @@ impl AppState {
     /// Returns request metrics registry.
     pub(crate) fn metrics(&self) -> RequestMetrics {
         self.metrics.clone()
-    }
-
-    /// Returns max wait for QR event while handling connect route.
-    pub(crate) fn connect_wait_timeout(&self) -> Duration {
-        self.connect_wait_timeout
     }
 
     /// Returns max accepted request body size in bytes.
@@ -141,9 +129,26 @@ struct ConnectionStateResponse {
 
 #[derive(Debug, Serialize)]
 struct ConnectResponse {
-    instance: String,
+    status: &'static str,
+    qrcode: Option<QrCodeResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct InstanceStateResponse {
     state: &'static str,
     qr: Option<String>,
+    qrcode: Option<QrCodeResponse>,
+    connected: bool,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct QrCodeResponse {
+    count: u32,
+    #[serde(rename = "pairingCode")]
+    pairing_code: Option<String>,
+    code: String,
+    base64: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,6 +183,7 @@ pub fn build_router(state: AppState) -> Router {
             get(connection_state_handler),
         )
         .route("/instance/connect/:name", get(connect_instance_handler))
+        .route("/instance/:name/state", get(instance_state_handler))
         .route("/message/:operation/:instance_name", post(post_message_handler))
         .route("/chat/findMessages/:instance_name", post(find_messages_handler))
         .route("/chat/findChats/:instance_name", get(find_chats_handler))
@@ -291,6 +297,30 @@ async fn connection_state_handler(
         .into_response()
 }
 
+async fn instance_state_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let manager = state.instance_manager();
+
+    let Some(handle) = manager.get(&name).await else {
+        return map_instance_error(InstanceError::NotFound);
+    };
+
+    let snapshot = handle.status().await;
+    (
+        StatusCode::OK,
+        Json(InstanceStateResponse {
+            state: snapshot.state.as_api_str(),
+            qr: snapshot.qrcode.code.clone(),
+            qrcode: to_qrcode_response(&snapshot),
+            connected: snapshot.state == ConnectionState::Connected,
+            last_error: snapshot.last_error,
+        }),
+    )
+        .into_response()
+}
+
 async fn connect_instance_handler(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -301,36 +331,37 @@ async fn connect_instance_handler(
         return map_instance_error(InstanceError::NotFound);
     };
 
-    let current_state = handle.connection_state().await;
-    if current_state == ConnectionState::Connected {
-        return (
-            StatusCode::CONFLICT,
-            Json(ApiErrorResponse {
-                error: "instance_already_connected",
-                message: format!("instance {name} is already connected"),
-            }),
-        )
-            .into_response();
-    }
-
-    let mut events = handle.subscribe();
     if let Err(error) = handle.connect().await {
         return map_instance_error(error);
     }
 
-    let qr = wait_for_qr_event(&mut events, state.connect_wait_timeout()).await;
-
-    let state_after = wait_for_connected_state(&handle, state.connect_wait_timeout()).await;
+    let mut snapshot = handle.status().await;
+    for _ in 0..10 {
+        if snapshot.qrcode.code.is_some() || snapshot.state == ConnectionState::Connected {
+            break;
+        }
+        sleep(Duration::from_millis(200)).await;
+        snapshot = handle.status().await;
+    }
 
     (
         StatusCode::OK,
         Json(ConnectResponse {
-            instance: name,
-            state: state_after.as_str(),
-            qr,
+            status: snapshot.state.as_api_str(),
+            qrcode: to_qrcode_response(&snapshot),
         }),
     )
         .into_response()
+}
+
+fn to_qrcode_response(snapshot: &crate::instance::InstanceStatus) -> Option<QrCodeResponse> {
+    let code = snapshot.qrcode.code.clone()?;
+    Some(QrCodeResponse {
+        count: snapshot.qrcode.count,
+        pairing_code: snapshot.qrcode.pairing_code.clone(),
+        code,
+        base64: snapshot.qrcode.base64.clone(),
+    })
 }
 
 fn map_instance_error(error: InstanceError) -> axum::response::Response {
@@ -375,45 +406,6 @@ fn map_instance_error(error: InstanceError) -> axum::response::Response {
             }),
         )
             .into_response(),
-    }
-}
-
-async fn wait_for_qr_event(
-    events: &mut tokio::sync::broadcast::Receiver<Event>,
-    max_wait: Duration,
-) -> Option<String> {
-    let deadline = Instant::now() + max_wait;
-
-    loop {
-        let now = Instant::now();
-        if now >= deadline {
-            return None;
-        }
-
-        let remaining = deadline.saturating_duration_since(now);
-        match timeout(remaining, events.recv()).await {
-            Ok(Ok(Event::QrCode(value))) => return Some(value),
-            Ok(Ok(_)) => continue,
-            Ok(Err(_)) => return None,
-            Err(_) => return None,
-        }
-    }
-}
-
-async fn wait_for_connected_state(handle: &InstanceHandle, max_wait: Duration) -> ConnectionState {
-    let deadline = Instant::now() + max_wait;
-
-    loop {
-        let current = handle.connection_state().await;
-        if current == ConnectionState::Connected {
-            return current;
-        }
-
-        if Instant::now() >= deadline {
-            return current;
-        }
-
-        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
 

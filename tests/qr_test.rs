@@ -7,7 +7,7 @@ use chatwarp_api::wa::{
 
 #[test]
 fn generate_qr_string_uses_expected_format() {
-    let value = generate_qr_string("ref-1", &[1, 2], &[3, 4], &[5, 6]);
+    let value = generate_qr_string("ref-1", &[1, 2], &[3, 4], "BQY=");
     assert_eq!(value, "ref-1,AQI=,AwQ=,BQY=");
 }
 

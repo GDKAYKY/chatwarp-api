@@ -1,0 +1,201 @@
+syntax = "proto3";
+
+package chatwarp.wa;
+
+enum AdvEncryptionType {
+  E2EE = 0;
+  HOSTED = 1;
+}
+
+message AdvDeviceIdentity {
+  optional uint32 raw_id = 1;
+  optional uint64 timestamp = 2;
+  optional uint32 key_index = 3;
+  optional AdvEncryptionType account_type = 4;
+  optional AdvEncryptionType device_type = 5;
+}
+
+message AdvSignedDeviceIdentity {
+  optional bytes details = 1;
+  optional bytes account_signature_key = 2;
+  optional bytes account_signature = 3;
+  optional bytes device_signature = 4;
+}
+
+message AdvSignedDeviceIdentityHmac {
+  optional bytes details = 1;
+  optional bytes hmac = 2;
+  optional AdvEncryptionType account_type = 3;
+}
+
+message HandshakeMessage {
+  ClientHello client_hello = 2;
+  ServerHello server_hello = 3;
+  ClientFinish client_finish = 4;
+
+  message ClientHello {
+    bytes ephemeral = 1;
+    bytes static = 2;
+    bytes payload = 3;
+    bool use_extended = 4;
+    bytes extended_ciphertext = 5;
+  }
+
+  message ServerHello {
+    bytes ephemeral = 1;
+    bytes static = 2;
+    bytes payload = 3;
+    bytes extended_static = 4;
+  }
+
+  message ClientFinish {
+    bytes static = 1;
+    bytes payload = 2;
+    bytes extended_ciphertext = 3;
+  }
+}
+
+message CertChain {
+  NoiseCertificate leaf = 1;
+  NoiseCertificate intermediate = 2;
+
+  message NoiseCertificate {
+    bytes details = 1;
+    bytes signature = 2;
+
+    message Details {
+      uint32 serial = 1;
+      uint32 issuer_serial = 2;
+      bytes key = 3;
+      uint64 not_before = 4;
+      uint64 not_after = 5;
+    }
+  }
+}
+
+message ClientPayload {
+  uint64 username = 1;
+  bool passive = 3;
+  UserAgent user_agent = 5;
+  WebInfo web_info = 6;
+  string push_name = 7;
+  ConnectType connect_type = 12;
+  ConnectReason connect_reason = 13;
+  uint32 device = 18;
+  DevicePairingRegistrationData device_pairing_data = 19;
+  bool pull = 33;
+  bool lid_db_migrated = 41;
+
+  enum ConnectType {
+    CELLULAR_UNKNOWN = 0;
+    WIFI_UNKNOWN = 1;
+  }
+
+  enum ConnectReason {
+    PUSH = 0;
+    USER_ACTIVATED = 1;
+    SCHEDULED = 2;
+    ERROR_RECONNECT = 3;
+    NETWORK_SWITCH = 4;
+    PING_RECONNECT = 5;
+    UNKNOWN = 6;
+  }
+
+  message UserAgent {
+    Platform platform = 1;
+    AppVersion app_version = 2;
+    string mcc = 3;
+    string mnc = 4;
+    string os_version = 5;
+    string manufacturer = 6;
+    string device = 7;
+    string os_build_number = 8;
+    string phone_id = 9;
+    ReleaseChannel release_channel = 10;
+    string locale_language_iso_639_1 = 11;
+    string locale_country_iso_3166_1_alpha_2 = 12;
+
+    enum Platform {
+      ANDROID = 0;
+      IOS = 1;
+      WEB = 14;
+    }
+
+    enum ReleaseChannel {
+      RELEASE = 0;
+      BETA = 1;
+      ALPHA = 2;
+      DEBUG = 3;
+    }
+
+    message AppVersion {
+      uint32 primary = 1;
+      uint32 secondary = 2;
+      uint32 tertiary = 3;
+      uint32 quaternary = 4;
+      uint32 quinary = 5;
+    }
+  }
+
+  message WebInfo {
+    WebSubPlatform web_sub_platform = 1;
+
+    enum WebSubPlatform {
+      WEB_BROWSER = 0;
+      DARWIN = 1;
+      WIN32 = 2;
+    }
+  }
+
+  message DevicePairingRegistrationData {
+    bytes e_regid = 1;
+    bytes e_keytype = 2;
+    bytes e_ident = 3;
+    bytes e_skey_id = 4;
+    bytes e_skey_val = 5;
+    bytes e_skey_sig = 6;
+    bytes build_hash = 7;
+    bytes device_props = 8;
+  }
+}
+
+message DeviceProps {
+  string os = 1;
+  AppVersion version = 2;
+  PlatformType platform_type = 3;
+  bool require_full_sync = 4;
+  HistorySyncConfig history_sync_config = 5;
+
+  message AppVersion {
+    uint32 primary = 1;
+    uint32 secondary = 2;
+    uint32 tertiary = 3;
+    uint32 quaternary = 4;
+    uint32 quinary = 5;
+  }
+
+  enum PlatformType {
+    UNKNOWN = 0;
+    CHROME = 1;
+    FIREFOX = 2;
+    IE = 3;
+    OPERA = 4;
+    SAFARI = 5;
+    EDGE = 6;
+    DESKTOP = 7;
+  }
+
+  message HistorySyncConfig {
+    uint32 storage_quota_mb = 3;
+    bool inline_initial_payload_in_e2ee_msg = 4;
+    bool support_call_log_history = 6;
+    bool support_bot_user_agent_chat_history = 7;
+    bool support_cag_reactions_and_polls = 8;
+    bool support_biz_hosted_msg = 9;
+    bool support_recent_sync_chunk_message_count_tuning = 10;
+    bool support_hosted_group_msg = 11;
+    bool support_fbid_bot_chat_history = 12;
+    bool support_message_association = 14;
+    bool support_group_history = 15;
+  }
+}

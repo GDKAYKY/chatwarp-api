@@ -23,9 +23,7 @@ pub struct NoiseState {
 impl NoiseState {
     /// Creates a new Noise state and mixes the provided prologue.
     pub fn new(prologue: &[u8]) -> Self {
-        let protocol_hash = Sha256::digest(NOISE_PROTOCOL_NAME);
-        let mut h = [0_u8; 32];
-        h.copy_from_slice(&protocol_hash);
+        let h = initialize_handshake_hash(NOISE_PROTOCOL_NAME);
 
         let mut state = Self {
             h,
@@ -108,4 +106,15 @@ fn build_nonce(counter: u32) -> [u8; 12] {
     let mut nonce = [0_u8; 12];
     nonce[8..].copy_from_slice(&counter.to_be_bytes());
     nonce
+}
+
+fn initialize_handshake_hash(protocol_name: &[u8]) -> [u8; 32] {
+    let mut hash = [0_u8; 32];
+    if protocol_name.len() <= hash.len() {
+        hash[..protocol_name.len()].copy_from_slice(protocol_name);
+        return hash;
+    }
+
+    hash.copy_from_slice(&Sha256::digest(protocol_name));
+    hash
 }

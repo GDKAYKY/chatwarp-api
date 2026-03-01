@@ -15,6 +15,18 @@ pub enum TransportError {
     FrameTooLarge,
     #[error("transport closed by peer")]
     Closed,
+    #[error("transport closed by peer with code {0}")]
+    ClosedWithCode(u16),
+}
+
+/// Handshake phases used for diagnostics in protocol errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakePhase {
+    HttpUpgrade,
+    ClientHello,
+    ServerHello,
+    ClientFinish,
+    PostFinish,
 }
 
 /// Errors for Noise state operations.
@@ -39,6 +51,20 @@ pub enum BinaryNodeError {
     InvalidUtf8,
     #[error("unknown token index: {0}")]
     UnknownToken(u8),
+    #[error("invalid binary node frame: {0}")]
+    InvalidFrame(&'static str),
+    #[error("unknown double-token dictionary index: {0}")]
+    UnknownTokenDictionary(u8),
+    #[error("unknown double-token index {index} in dictionary {dict}")]
+    UnknownDoubleToken { dict: u8, index: u8 },
+    #[error("invalid list tag: {0}")]
+    InvalidListTag(u8),
+    #[error("invalid packed character: {0}")]
+    InvalidPackedChar(u8),
+    #[error("invalid compressed node")]
+    InvalidCompressedNode,
+    #[error("zlib inflate failed: {0}")]
+    InflateFailed(String),
     #[error("symbol exceeds u16 max length")]
     SymbolTooLong,
     #[error("payload exceeds u32 max length")]
@@ -101,4 +127,19 @@ pub enum HandshakeError {
     MissingField(&'static str),
     #[error("invalid handshake key length for {0}")]
     InvalidKeyLength(&'static str),
+    #[error("handshake failed at {phase:?}: {message}")]
+    Phase {
+        phase: HandshakePhase,
+        message: String,
+    },
+}
+
+impl HandshakeError {
+    /// Creates a phase-aware handshake error preserving actionable context.
+    pub fn with_phase(phase: HandshakePhase, message: impl Into<String>) -> Self {
+        Self::Phase {
+            phase,
+            message: message.into(),
+        }
+    }
 }
