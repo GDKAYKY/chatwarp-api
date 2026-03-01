@@ -6,7 +6,7 @@ use std::{
 };
 
 use axum::{
-    body::Body,
+    body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
 use tower::ServiceExt;
@@ -31,7 +31,6 @@ async fn message_route_send_text_returns_message_key() -> anyhow::Result<()> {
         server.url.clone(),
     );
     let app = build_router(AppState::with_instance_manager(
-        Duration::from_millis(300),
         256 * 1024,
         manager,
     ));
@@ -58,7 +57,29 @@ async fn message_route_send_text_returns_message_key() -> anyhow::Result<()> {
         )
         .await?;
     assert_eq!(connect.status(), StatusCode::OK);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        let state_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/instance/m7/state")
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(state_response.status(), StatusCode::OK);
+        let body = to_bytes(state_response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        if payload["connected"] == true {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("instance did not connect within timeout");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 
     let message = app
         .clone()

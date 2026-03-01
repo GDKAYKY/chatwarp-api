@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::{
     app::AppState,
+    config::WaProtocolMode,
     instance::{ConnectionState, InstanceCommand, InstanceError},
     wa::{
         MessageError,
@@ -81,7 +82,11 @@ pub async fn post_message_handler(
         Err(error) => return map_message_error(error),
     };
 
-    let encoded = match binary_node::encode(&node) {
+    let encoded = match manager.protocol_mode() {
+        WaProtocolMode::RealMd => binary_node::encode_real(&node),
+        WaProtocolMode::Synthetic | WaProtocolMode::Auto => binary_node::encode(&node),
+    };
+    let encoded = match encoded {
         Ok(encoded) => encoded,
         Err(error) => return map_message_error(MessageError::BinaryNode(error)),
     };

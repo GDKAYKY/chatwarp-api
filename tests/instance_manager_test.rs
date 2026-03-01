@@ -60,6 +60,10 @@ async fn manager_create_connect_delete_flow() -> anyhow::Result<()> {
         anyhow::bail!("expected qr event");
     };
     assert!(qr_payload.starts_with("2@alpha-reference,"));
+    let status_after_qr = handle.status().await;
+    assert_eq!(status_after_qr.state, ConnectionState::QrPending);
+    assert_eq!(status_after_qr.qrcode.code.as_deref(), Some(qr_payload.as_str()));
+    assert_eq!(status_after_qr.qrcode.count, 1);
 
     let connected_event =
         tokio::time::timeout(std::time::Duration::from_secs(1), events.recv()).await??;
@@ -69,6 +73,9 @@ async fn manager_create_connect_delete_flow() -> anyhow::Result<()> {
 
     let connected_state = handle.connection_state().await;
     assert_eq!(connected_state, ConnectionState::Connected);
+    let connected_status = handle.status().await;
+    assert_eq!(connected_status.qrcode.code, None);
+    assert_eq!(connected_status.last_error, None);
 
     manager.delete("alpha").await?;
     assert!(manager.get("alpha").await.is_none());

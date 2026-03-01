@@ -14,6 +14,7 @@ POST /instance/create -> 201
 DELETE /instance/delete/:name -> 200
 GET /instance/connectionState/:name -> 200
 GET /instance/connect/:name -> 200
+GET /instance/:name/state -> 200
 POST /message/:operation/:instance_name -> 200 | 409 (instância não conectada) | 501 (operação ainda não implementada)
 POST /chat/findMessages/:instance_name -> 200
 GET /chat/findChats/:instance_name -> 200
@@ -40,6 +41,8 @@ Operações válidas em `:operation`:
 Observação da fase atual:
 - Apenas `sendText` está habilitada no fluxo real.
 - Operações diferentes de `sendText` retornam `501 Not Implemented`.
+- `GET /instance/connect/:name` apenas dispara conexão e retorna `{"status":"connecting"}`.
+- `GET /instance/:name/state` expõe estado atual, QR corrente e último erro.
 
 Validações adicionais:
 - `POST /instance/create` retorna `400` quando `name` é vazio/apenas espaços.

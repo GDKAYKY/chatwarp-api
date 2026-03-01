@@ -10,15 +10,16 @@ use std::{
 use tokio::sync::{RwLock, broadcast, mpsc};
 
 use crate::{
+    config::WaProtocolMode,
     db::auth_store::{
         AuthStore,
         InMemoryAuthStore,
     },
-    wa::events::Event,
+    wa::{events::Event, version::WaVersionManager},
 };
 
 pub use error::InstanceError;
-pub use handle::{ConnectionState, InstanceCommand, InstanceHandle};
+pub use handle::{ConnectionState, InstanceCommand, InstanceHandle, InstanceStatus};
 
 /// Configuration used when creating a new instance task.
 #[derive(Debug, Clone, Default)]
@@ -33,6 +34,8 @@ pub struct InstanceManager {
     instances: Arc<RwLock<HashMap<String, InstanceHandle>>>,
     auth_store: Arc<dyn AuthStore>,
     wa_ws_url: String,
+    wa_protocol_mode: WaProtocolMode,
+    wa_version_manager: Arc<WaVersionManager>,
 }
 
 impl InstanceManager {
@@ -40,18 +43,31 @@ impl InstanceManager {
 
     /// Creates a new empty manager.
     pub fn new() -> Self {
-        Self::new_with_runtime(
+        Self::new_with_runtime_and_mode(
             Arc::new(InMemoryAuthStore::new()),
             Self::DEFAULT_WA_WS_URL.to_owned(),
+            WaProtocolMode::Auto,
         )
     }
 
     /// Creates a manager with explicit auth store and ws endpoint.
     pub fn new_with_runtime(auth_store: Arc<dyn AuthStore>, wa_ws_url: String) -> Self {
+        Self::new_with_runtime_and_mode(auth_store, wa_ws_url, WaProtocolMode::Auto)
+    }
+
+    /// Creates a manager with explicit auth store, endpoint and protocol mode policy.
+    pub fn new_with_runtime_and_mode(
+        auth_store: Arc<dyn AuthStore>,
+        wa_ws_url: String,
+        wa_protocol_mode: WaProtocolMode,
+    ) -> Self {
+        let resolved_mode = wa_protocol_mode.resolve_for_url(&wa_ws_url);
         Self {
             instances: Arc::new(RwLock::new(HashMap::new())),
             auth_store,
             wa_ws_url,
+            wa_protocol_mode: resolved_mode,
+            wa_version_manager: Arc::new(WaVersionManager::default()),
         }
     }
 
@@ -66,16 +82,18 @@ impl InstanceManager {
 
             let (tx, rx) = mpsc::channel(64);
             let (event_tx, _) = broadcast::channel::<Event>(256);
-            let state = Arc::new(RwLock::new(ConnectionState::Disconnected));
-            let handle = InstanceHandle::new(tx, state.clone(), event_tx.clone());
+            let status = Arc::new(RwLock::new(InstanceStatus::default()));
+            let handle = InstanceHandle::new(tx, status.clone(), event_tx.clone());
 
             tokio::spawn(crate::instance::runner::run(
                 name.to_owned(),
-                state,
+                status,
                 rx,
                 event_tx,
                 self.auth_store.clone(),
                 self.wa_ws_url.clone(),
+                self.wa_protocol_mode,
+                self.wa_version_manager.clone(),
             ));
             instances.insert(name.to_owned(), handle.clone());
             handle
@@ -101,6 +119,11 @@ impl InstanceManager {
     /// Returns the current total number of tracked instances.
     pub async fn count(&self) -> usize {
         self.instances.read().await.len()
+    }
+
+    /// Returns the protocol mode used by all managed instances in this manager.
+    pub fn protocol_mode(&self) -> WaProtocolMode {
+        self.wa_protocol_mode
     }
 
     /// Deletes an instance and asks its runner to shutdown.
