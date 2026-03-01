@@ -16,6 +16,7 @@ ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.31"
 hkdf = "0.12.4"
 http = "1.2.0"
+hex = "0.4"
 flate2 = "1.0.35"
 md5 = "0.7.0"
 prost = "0.13.4"

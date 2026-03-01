@@ -75,9 +75,12 @@ pub fn sign_message(private: [u8; 32], public: [u8; 32], message: &[u8]) -> [u8;
     let mut out = [0_u8; 64];
     out[..32].copy_from_slice(&nonce_point);
     out[32..].copy_from_slice(&s.to_bytes());
+    
     out
 
     //debug
+
+    
     
 }
 
@@ -88,7 +91,7 @@ pub fn verify_message(public: [u8; 32], message: &[u8], signature: &[u8]) -> boo
         return false;
     }
 
-    // Try Ed25519 pure first (used for WA certificates)
+    // Ed25519 puro — só retorna true se verificar. Qualquer falha cai no XEdDSA.
     if let Ok(verifying_key) = VerifyingKey::from_bytes(&public) {
         if let Ok(sig) = Signature::from_slice(signature) {
             if verifying_key.verify(message, &sig).is_ok() {
@@ -97,9 +100,11 @@ pub fn verify_message(public: [u8; 32], message: &[u8], signature: &[u8]) -> boo
         }
     }
 
-    // Fallback to XEdDSA for Curve25519 keys
+    // XEdDSA para chaves Curve25519 (X25519)
     let mut r_bytes = [0_u8; 32];
     r_bytes.copy_from_slice(&signature[..32]);
+    r_bytes[31] &= 0x7F;
+
     let Some(r_point) = CompressedEdwardsY(r_bytes).decompress() else {
         return false;
     };
@@ -111,21 +116,21 @@ pub fn verify_message(public: [u8; 32], message: &[u8], signature: &[u8]) -> boo
     };
 
     let mont = MontgomeryPoint(public);
-    let challenge = hash_to_scalar(&[&r_bytes, &public, message]);
     let lhs = &s * ED25519_BASEPOINT_TABLE;
-    for sign in [0, 1] {
+
+    for sign in [0u8, 1u8] {
         let Some(a_point) = mont.to_edwards(sign) else {
             continue;
         };
-        let rhs = r_point + (challenge * a_point);
-        if lhs == rhs {
+        let a_bytes = a_point.compress().to_bytes();
+        let challenge = hash_to_scalar(&[&r_bytes, &a_bytes, message]);
+        if lhs == r_point + (challenge * a_point) {
             return true;
         }
     }
 
     false
 }
-
 fn hash_to_scalar(parts: &[&[u8]]) -> Scalar {
     let mut hasher = Sha512::new();
     for part in parts {
