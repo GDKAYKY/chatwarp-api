@@ -6,7 +6,7 @@ COPY proto ./proto
 COPY src ./src
 COPY tests ./tests
 
-RUN cargo build --release --bin chatwarp-api
+RUN cargo build --release --bin whatsapp-rust
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -15,10 +15,10 @@ RUN apt-get update \
     && useradd --create-home --uid 10001 appuser
 
 WORKDIR /app
-COPY --from=builder /app/target/release/chatwarp-api /usr/local/bin/chatwarp-api
+COPY --from=builder /app/target/release/whatsapp-rust /usr/local/bin/whatsapp-rust
 
 ENV SERVER_PORT=8080
 EXPOSE 8080
 USER appuser
 
-CMD ["chatwarp-api"]
+CMD ["whatsapp-rust"]

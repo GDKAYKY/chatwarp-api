@@ -18,19 +18,19 @@
       ]
     },
     {
-      "name": "Debug chatwarp-api (bin)",
+      "name": "Debug whatsapp-rust (bin)",
       "type": "lldb",
       "request": "launch",
       "cargo": {
         "args": [
           "build",
           "--bin",
-          "chatwarp-api",
+          "whatsapp-rust",
           "--package",
-          "chatwarp-api"
+          "whatsapp-rust"
         ],
         "filter": {
-          "name": "chatwarp-api",
+          "name": "whatsapp-rust",
           "kind": "bin"
         }
       },
@@ -50,7 +50,7 @@
           "test",
           "--lib",
           "--package",
-          "chatwarp-api"
+          "whatsapp-rust"
         ],
         "filter": {
           "name": "chatwarp_api",
@@ -74,7 +74,7 @@
           "--test",
           "app_test",
           "--package",
-          "chatwarp-api"
+          "whatsapp-rust"
         ],
         "filter": {
           "name": "app_test",

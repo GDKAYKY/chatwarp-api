@@ -1,5 +1,5 @@
 ---
-description: 
+description:
 alwaysApply: true
 ---
 
@@ -12,7 +12,7 @@ alwaysApply: true
 
 ## O que é este projeto
 
-**chatwarp-api** — API HTTP em Rust que implementa um cliente WhatsApp Web completo.
+**whatsapp-rust** — API HTTP em Rust que implementa um cliente WhatsApp Web completo.
 Não há sidecar. Não há processo externo. A lógica de protocolo (Noise, Signal, BinaryNode,
 WebSocket) vive diretamente neste repositório.
 
@@ -29,18 +29,18 @@ docs/ENV.md                   variáveis de ambiente e defaults
 
 ## Stack
 
-| Responsabilidade | Crate |
-|---|---|
-| Runtime async | `tokio` |
-| HTTP | `axum` |
-| WebSocket (WA) | `tokio-tungstenite` |
-| Protobuf | `prost` + `prost-build` |
-| Noise / Crypto | `x25519-dalek`, `aes-gcm`, `hkdf`, `sha2` |
-| Signal E2E | `libsignal-client` |
-| Banco | `sqlx` + PostgreSQL |
-| Serialização | `serde`, `serde_json`, `bytes` |
-| Erros | `thiserror` (libs) + `anyhow` (handlers) |
-| Logging | `tracing` + `tracing-subscriber` |
+| Responsabilidade | Crate                                     |
+| ---------------- | ----------------------------------------- |
+| Runtime async    | `tokio`                                   |
+| HTTP             | `axum`                                    |
+| WebSocket (WA)   | `tokio-tungstenite`                       |
+| Protobuf         | `prost` + `prost-build`                   |
+| Noise / Crypto   | `x25519-dalek`, `aes-gcm`, `hkdf`, `sha2` |
+| Signal E2E       | `libsignal-client`                        |
+| Banco            | `sqlx` + PostgreSQL                       |
+| Serialização     | `serde`, `serde_json`, `bytes`            |
+| Erros            | `thiserror` (libs) + `anyhow` (handlers)  |
+| Logging          | `tracing` + `tracing-subscriber`          |
 
 ---
 
@@ -108,6 +108,7 @@ docs/ENV.md                   variáveis de ambiente e defaults
 ## Instâncias WA
 
 Cada instância é uma sessão WhatsApp independente com:
+
 - Conexão WebSocket própria (`src/wa/transport.rs`)
 - Estado Noise próprio (`src/wa/noise.rs`)
 - AuthState persistido no banco por `instance_name`
@@ -124,6 +125,7 @@ Não compartilhar estado entre instâncias. Sem globals mutáveis.
 Documentação atualizada de crates e frameworks.
 
 Quando usar:
+
 - Dúvida sobre API de `axum`, `sqlx`, `tokio`, `prost`, `tonic`
 - Verificar versão atual de crate antes de adicionar no `Cargo.toml`
 
@@ -139,12 +141,14 @@ use context7 to check current sqlx version and query macro usage
 Integração nativa com rust-analyzer via MCP.
 
 Instalação:
+
 ```bash
 cargo install rust-analyzer-mcp
 rustup component add rust-analyzer
 ```
 
 Configuração (`.mcp.json` na raiz):
+
 ```json
 {
   "mcpServers": {
@@ -155,14 +159,14 @@ Configuração (`.mcp.json` na raiz):
 }
 ```
 
-| Tool | Quando usar |
-|---|---|
-| `rust_analyzer_hover` | Verificar tipo antes de escrever código |
-| `rust_analyzer_diagnostics` | Checar erros de um arquivo sem rodar `cargo check` |
-| `rust_analyzer_workspace_diagnostics` | Validar workspace inteiro antes de commitar |
-| `rust_analyzer_definition` | Navegar definição de trait sem perder contexto |
-| `rust_analyzer_code_actions` | Quick fixes e refatorações disponíveis |
-| `rust_analyzer_symbols` | Listar símbolos de um módulo |
+| Tool                                  | Quando usar                                        |
+| ------------------------------------- | -------------------------------------------------- |
+| `rust_analyzer_hover`                 | Verificar tipo antes de escrever código            |
+| `rust_analyzer_diagnostics`           | Checar erros de um arquivo sem rodar `cargo check` |
+| `rust_analyzer_workspace_diagnostics` | Validar workspace inteiro antes de commitar        |
+| `rust_analyzer_definition`            | Navegar definição de trait sem perder contexto     |
+| `rust_analyzer_code_actions`          | Quick fixes e refatorações disponíveis             |
+| `rust_analyzer_symbols`               | Listar símbolos de um módulo                       |
 
 > https://github.com/zeenix/rust-analyzer-mcp
 
@@ -171,25 +175,31 @@ Configuração (`.mcp.json` na raiz):
 ### Sugestões Adicionais
 
 #### `@modelcontextprotocol/server-github`
+
 Acesso à API do GitHub.
 
 Útil para:
+
 - Ler arquivos do Baileys sem clonar (`WhiskeySockets/Baileys`)
 - Buscar token dictionary: `Baileys/src/WABinary/token.ts`
 - Ler `.proto` files: `Baileys/src/WAProto/`
 
 #### `@modelcontextprotocol/server-postgres`
+
 Conexão direta com o banco de desenvolvimento.
 
 Útil para:
+
 - Verificar schema antes de escrever queries SQLx
 - Validar migrations
 - Inspecionar AuthState persistido por instância
 
 #### `@modelcontextprotocol/server-filesystem`
+
 Acesso ao filesystem do projeto.
 
 Útil para:
+
 - Ler fixtures `tests/fixtures/*.bin`
 - Inspecionar `.proto` files antes de gerar código
 

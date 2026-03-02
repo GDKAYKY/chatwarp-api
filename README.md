@@ -1,10 +1,11 @@
-# chatwarp-api
+# whatsapp-rust
 
 API HTTP em Rust para o runtime Direct WA Client (sem sidecar gRPC).
 
 ## Estado atual (M0-M10)
 
 Entregue:
+
 - Bootstrap do crate (`src/lib.rs`) com `run()` funcional.
 - Runtime Axum mínimo com:
   - `GET /`
@@ -61,6 +62,7 @@ Entregue:
   - `tests/observability_test.rs`
 
 Ainda não entregue:
+
 - integrações reais externas e rotas fora de escopo (`/call/*`, `/settings/*`, etc.).
 
 ## Requisitos

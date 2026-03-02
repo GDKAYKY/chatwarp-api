@@ -20,12 +20,12 @@ services:
     networks:
       - chatwarp-net
 
-  chatwarp-api:
+  whatsapp-rust:
     build:
       context: .
       dockerfile: Dockerfile
-    image: chatwarp-api:local
-    container_name: chatwarp-api
+    image: whatsapp-rust:local
+    container_name: whatsapp-rust
     restart: unless-stopped
     environment:
       SERVER_PORT: 8080
@@ -33,7 +33,7 @@ services:
       WA_WS_URL: wss://web.whatsapp.com/ws/chat
       WA_RUNNER_MODE: wa_rs
       WA_RS_AUTH_POLL_INTERVAL_SECS: 2
-      RUST_LOG: debug 
+      RUST_LOG: debug
     ports:
       - "8080:8080"
     depends_on:
@@ -54,15 +54,15 @@ services:
     profiles:
       - tools
     depends_on:
-      chatwarp-api:
+      whatsapp-rust:
         condition: service_healthy
     volumes:
       - ./postman:/etc/newman
     command:
       - run
-      - /etc/newman/collections/chatwarp-api.docker.postman_collection.json
+      - /etc/newman/collections/whatsapp-rust.docker.postman_collection.json
       - -e
-      - /etc/newman/environments/chatwarp-api.docker.postman_environment.json
+      - /etc/newman/environments/whatsapp-rust.docker.postman_environment.json
     networks:
       - chatwarp-net
 

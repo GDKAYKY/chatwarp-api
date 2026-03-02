@@ -1,6 +1,6 @@
 # USAGE GUIDE
 
-Guia rápido para usar o `chatwarp-api` em outro projeto, especialmente Java.
+Guia rápido para usar o `whatsapp-rust` em outro projeto, especialmente Java.
 
 ## 1. Subir a API com Docker Compose
 
@@ -19,13 +19,13 @@ curl -fsS http://localhost:8080/healthz
 Resposta esperada:
 
 ```json
-{"ok":true}
+{ "ok": true }
 ```
 
 ## 2. URLs de acesso
 
 - Host local: `http://localhost:8080`
-- Dentro da rede Docker (`chatwarp-net`): `http://chatwarp-api:8080`
+- Dentro da rede Docker (`chatwarp-net`): `http://whatsapp-rust:8080`
 
 ## 3. Integrar no projeto Java
 
@@ -38,7 +38,7 @@ services:
   my-java-app:
     image: my-java-app:latest
     environment:
-      CHATWARP_BASE_URL: http://chatwarp-api:8080
+      CHATWARP_BASE_URL: http://whatsapp-rust:8080
     networks:
       - chatwarp-net
 
@@ -118,7 +118,7 @@ public class ChatwarpClient {
 Configuração recomendada:
 
 - `CHATWARP_BASE_URL=http://localhost:8080` (host)
-- `CHATWARP_BASE_URL=http://chatwarp-api:8080` (container na mesma rede)
+- `CHATWARP_BASE_URL=http://whatsapp-rust:8080` (container na mesma rede)
 
 ## 6. Endpoints úteis
 
@@ -131,5 +131,5 @@ Configuração recomendada:
 ## 7. Solução de problemas
 
 - `Connection refused`: verifique se a API está de pé com `docker compose ps`.
-- Container Java não resolve `chatwarp-api`: garanta que ambos estão na rede `chatwarp-net`.
+- Container Java não resolve `whatsapp-rust`: garanta que ambos estão na rede `chatwarp-net`.
 - Mudou algo no código da API e não refletiu: rebuild com `docker compose up -d --build`.

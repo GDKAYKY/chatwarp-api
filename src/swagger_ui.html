@@ -3,13 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="chatwarp-api Swagger Documentation" />
-    <title>chatwarp-api | Swagger UI</title>
-    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAA7EAAAOxAGVKw4bAAAA0klEQVRYhe2WMQ6DMAxFfyRW7sCdOAJ34gicgTtwB1YmJqQqUqXEJKRqh/KlSJHl+NmOHWMYhmEYxr8DzgAugBvwAM7RfQE4AlfgDjyBW3RfAU7AFbgBT+Ae3TeAI3AFbsATuEf3HWAPXIAb8ATu0X0H2AFn4AY8gHt0PwB2wBm4AQ/gHt0PgC1wAq7AA7hH9xNgA5yAK/AA7tH9AtgAJ+AKPPqYX0vL0vL0vLw8Py8vz8/Ly/Pz8vL8vLw8Py8vz8/Ly/Pz8vL8vLw8Py8vz8/Ly/Pz8oYx/AJfuXYwWZ8hqKMAAAAASUVORK5CYII=" />
-    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+    <meta name="description" content="whatsapp-rust Swagger Documentation" />
+    <title>whatsapp-rust | Swagger UI</title>
+    <link
+      rel="icon"
+      type="image/png"
+      href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAA7EAAAOxAGVKw4bAAAA0klEQVRYhe2WMQ6DMAxFfyRW7sCdOAJ34gicgTtwB1YmJqQqUqXEJKRqh/KlSJHl+NmOHWMYhmEYxr8DzgAugBvwAM7RfQE4AlfgDjyBW3RfAU7AFbgBT+Ae3TeAI3AFbsATuEf3HWAPXIAb8ATu0X0H2AFn4AY8gHt0PwB2wBm4AQ/gHt0PgC1wAq7AA7hH9xNgA5yAK/AA7tH9AtgAJ+AKPPqYX0vL0vL0vLw8Py8vz8/Ly/Pz8vL8vLw8Py8vz8/Ly/Pz8vL8vLw8Py8vz8/Ly/Pz8oYx/AJfuXYwWZ8hqKMAAAAASUVORK5CYII="
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"
+    />
     <style>
-      body { margin: 0; padding: 0; }
-      .swagger-ui .topbar { display: none; }
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      .swagger-ui .topbar {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -17,7 +29,7 @@
     <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
     <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
     <script>
-      window.onload = function() {
+      window.onload = function () {
         window.ui = SwaggerUIBundle({
           url: "/openapi.json",
           dom_id: "#swagger-ui",
@@ -26,14 +38,11 @@
           filter: true,
           tryItOutEnabled: true,
           persistAuthorization: true,
-          presets: [
-            SwaggerUIBundle.presets.apis,
-            SwaggerUIStandalonePreset
-          ],
+          presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
           layout: "StandaloneLayout",
           docExpansion: "list",
           defaultModelsExpandDepth: 1,
-          defaultModelExpandDepth: 1
+          defaultModelExpandDepth: 1,
         });
       };
     </script>

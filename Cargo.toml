@@ -1,18 +1,99 @@
+
 [package]
-name = "chatwarp-api"
-version = "0.1.0"
+name = "whatsapp-rust"
+version = "0.2.0"
 edition = "2024"
+authors = ["GDKAYKY <kaykyvitorgp@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/GDKAYKY/whatsapp-rust"
+readme = "README.md"
+description = "Rust client for WhatsApp Web"
+
+[workspace]
+members = [
+    ".",
+    "http_clients/ureq-client",
+    "storages/sqlite-storage",
+    "transports/tokio-transport",
+    "warp_core",
+    "warp_core/appstate",
+    "warp_core/binary",
+    "warp_core/libsignal",
+    "waproto",
+]
+
+[workspace.dependencies]
+flate2 = { version = "1.1.5", default-features = false, features = ["zlib-rs"] }
+rand = "0.9"
+rand_core = "0.9"
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", default-features = false }
+warp_core-appstate = { path = "./warp_core/appstate", version = "0.2.0" }
+warp_core-binary = { path = "./warp_core/binary", version = "0.2.0" }
+waproto = { path = "./waproto", version = "0.2.0" }
+
+[features]
+danger-skip-tls-verify = [
+    "whatsapp-rust-tokio-transport?/danger-skip-tls-verify",
+]
+default = ["sqlite-storage", "tokio-transport", "ureq-client", "tokio-native"]
+ureq-client = ["dep:whatsapp-rust-ureq-http-client"]
+tokio-transport = ["dep:whatsapp-rust-tokio-transport"]
+signal = ["tokio/signal"]
+sqlite-storage = ["whatsapp-rust-sqlite-storage"]
+tokio-native = ["tokio/rt-multi-thread"]
 
 [dependencies]
-thiserror = "2.0.18"
-tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread"] }
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
-wa-rs = { version = "0.2", features = [
-    "sqlite-storage",
-    "tokio-transport",
-    "ureq-client",
+
+anyhow = { version = "1.0", default-features = false }
+async-channel = "2.5.0"
+async-trait = "0.1.89"
+base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
+bytes = { version = "1.5", default-features = false }
+
+# Time handling
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "serde",
 ] }
-libsqlite3-sys = { version = "0.35.0", features = ["bundled"] }
-dotenvy = "0.15.7"
-qrcode = "0.14.1"
+dashmap = "6.1.0"
+env_logger = { version = "0.11", default-features = false }
+hex = { version = "0.4", features = ["alloc"], default-features = false }
+indexmap = { version = "2.12.1", features = ["serde"] }
+log = "0.4.27"
+moka = { version = "0.12.12", features = ["future"] }
+prost = { version = "0.14.1", default-features = false }
+
+# Cryptography
+rand = { workspace = true }
+rand_core = { workspace = true }
+scopeguard = "1.2"
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0"
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+warp_core = { path = "./warp_core", version = "0.2.0" }
+warp_core-binary = { workspace = true }
+waproto = { workspace = true }
+whatsapp-rust-sqlite-storage = { path = "./storages/sqlite-storage", version = "0.2.0", optional = true }
+whatsapp-rust-tokio-transport = { path = "./transports/tokio-transport", version = "0.2.0", optional = true }
+whatsapp-rust-ureq-http-client = { path = "./http_clients/ureq-client", version = "0.2.0", optional = true }
+
+[dev-dependencies]
+uuid = { version = "1.0", features = ["v4"] }
+
+[profile.release]
+opt-level = "z"
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+incremental = false
+
+# Benchmark profile: optimized but without aggressive LTO that breaks iai-callgrind
+[profile.bench]
+inherits = "release"
+lto = "thin"
+debug = 1
+strip = false

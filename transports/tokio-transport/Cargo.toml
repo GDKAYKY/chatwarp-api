@@ -1,0 +1,45 @@
+[package]
+repository = "https://github.com/GDKAYKY/whatsapp-rust"
+name = "whatsapp-rust-tokio-transport"
+version = "0.2.0"
+edition = "2024"
+authors = ["GDKAYKY <kaykyvitorgp@gmail.com>"]
+license = "MIT"
+description = "Tokio-based WebSocket transport for whatsapp-rust"
+
+[features]
+default = []
+# Skip TLS certificate verification (for testing with mock servers)
+danger-skip-tls-verify = []
+
+[dependencies]
+anyhow = { version = "1.0", default-features = false }
+async-channel = "2.5.0"
+async-trait = "0.1.89"
+bytes = { version = "1.5", default-features = false }
+futures-util = { version = "0.3.31", default-features = false, features = [
+    "sink",
+    "alloc",
+    "std",
+] }
+http = "1.4.0"
+log = "0.4.29"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+tokio = { version = "1.48.0", features = [
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = [
+    "ring",
+] }
+tokio-websockets = { version = "0.13.0", features = [
+    "client",
+    "rustls-bring-your-own-connector",
+    "rand",
+    "ring",
+] }
+warp_core = { path = "../../warp_core", version = "0.2.0" }
+webpki-roots = "1.0.4"
