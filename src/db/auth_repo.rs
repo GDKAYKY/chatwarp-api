@@ -50,6 +50,28 @@ impl AuthRepo {
             None => Ok(None),
         }
     }
+
+    /// Enqueues an outbound payload for external runner delivery.
+    pub async fn enqueue_outbound(
+        &self,
+        instance_name: &str,
+        message_id: &str,
+        payload: &[u8],
+    ) -> Result<(), AuthRepoError> {
+        sqlx::query(
+            r#"
+            INSERT INTO wa_runner_outbox (instance_name, message_id, payload, created_at)
+            VALUES ($1, $2, $3, NOW())
+            "#,
+        )
+        .bind(instance_name)
+        .bind(message_id)
+        .bind(payload)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 /// Errors for auth repository operations.

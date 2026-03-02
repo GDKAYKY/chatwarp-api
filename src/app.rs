@@ -337,7 +337,10 @@ async fn connect_instance_handler(
 
     let mut snapshot = handle.status().await;
     for _ in 0..10 {
-        if snapshot.qrcode.code.is_some() || snapshot.state == ConnectionState::Connected {
+        if snapshot.qrcode.code.is_some()
+            || snapshot.state == ConnectionState::Connected
+            || snapshot.state == ConnectionState::QrPending
+        {
             break;
         }
         sleep(Duration::from_millis(200)).await;

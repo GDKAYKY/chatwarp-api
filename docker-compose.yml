@@ -31,6 +31,8 @@ services:
       SERVER_PORT: 8080
       DATABASE_URL: postgres://chatwarp:chatwarp@postgres:5432/chatwarp
       WA_WS_URL: wss://web.whatsapp.com/ws/chat
+      WA_RUNNER_MODE: wa_rs
+      WA_RS_AUTH_POLL_INTERVAL_SECS: 2
       RUST_LOG: debug 
     ports:
       - "8080:8080"

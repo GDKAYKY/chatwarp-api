@@ -1,6 +1,7 @@
 pub mod error;
 pub mod handle;
 pub mod runner;
+pub mod wa_rs_runner;
 
 use std::{
     collections::HashMap,
@@ -10,12 +11,12 @@ use std::{
 use tokio::sync::{RwLock, broadcast, mpsc};
 
 use crate::{
-    config::WaProtocolMode,
+    config::{WaProtocolMode, WaRunnerMode},
     db::auth_store::{
         AuthStore,
         InMemoryAuthStore,
     },
-    wa::{events::Event, version::WaVersionManager},
+    wa::events::Event,
 };
 
 pub use error::InstanceError;
@@ -33,9 +34,9 @@ pub struct InstanceConfig {
 pub struct InstanceManager {
     instances: Arc<RwLock<HashMap<String, InstanceHandle>>>,
     auth_store: Arc<dyn AuthStore>,
-    wa_ws_url: String,
     wa_protocol_mode: WaProtocolMode,
-    wa_version_manager: Arc<WaVersionManager>,
+    wa_rs_bot_command: Option<String>,
+    wa_rs_auth_poll_interval: std::time::Duration,
 }
 
 impl InstanceManager {
@@ -47,12 +48,22 @@ impl InstanceManager {
             Arc::new(InMemoryAuthStore::new()),
             Self::DEFAULT_WA_WS_URL.to_owned(),
             WaProtocolMode::Auto,
+            WaRunnerMode::WaRsBot,
+            None,
+            std::time::Duration::from_secs(2),
         )
     }
 
     /// Creates a manager with explicit auth store and ws endpoint.
     pub fn new_with_runtime(auth_store: Arc<dyn AuthStore>, wa_ws_url: String) -> Self {
-        Self::new_with_runtime_and_mode(auth_store, wa_ws_url, WaProtocolMode::Auto)
+        Self::new_with_runtime_and_mode(
+            auth_store,
+            wa_ws_url,
+            WaProtocolMode::Auto,
+            WaRunnerMode::WaRsBot,
+            None,
+            std::time::Duration::from_secs(2),
+        )
     }
 
     /// Creates a manager with explicit auth store, endpoint and protocol mode policy.
@@ -60,14 +71,17 @@ impl InstanceManager {
         auth_store: Arc<dyn AuthStore>,
         wa_ws_url: String,
         wa_protocol_mode: WaProtocolMode,
+        _wa_runner_mode: WaRunnerMode,
+        wa_rs_bot_command: Option<String>,
+        wa_rs_auth_poll_interval: std::time::Duration,
     ) -> Self {
         let resolved_mode = wa_protocol_mode.resolve_for_url(&wa_ws_url);
         Self {
             instances: Arc::new(RwLock::new(HashMap::new())),
             auth_store,
-            wa_ws_url,
             wa_protocol_mode: resolved_mode,
-            wa_version_manager: Arc::new(WaVersionManager::default()),
+            wa_rs_bot_command,
+            wa_rs_auth_poll_interval,
         }
     }
 
@@ -85,15 +99,14 @@ impl InstanceManager {
             let status = Arc::new(RwLock::new(InstanceStatus::default()));
             let handle = InstanceHandle::new(tx, status.clone(), event_tx.clone());
 
-            tokio::spawn(crate::instance::runner::run(
+            tokio::spawn(crate::instance::wa_rs_runner::run(
                 name.to_owned(),
                 status,
                 rx,
                 event_tx,
                 self.auth_store.clone(),
-                self.wa_ws_url.clone(),
-                self.wa_protocol_mode,
-                self.wa_version_manager.clone(),
+                self.wa_rs_bot_command.clone(),
+                self.wa_rs_auth_poll_interval,
             ));
             instances.insert(name.to_owned(), handle.clone());
             handle

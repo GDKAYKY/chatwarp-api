@@ -14,6 +14,13 @@ pub enum WaProtocolMode {
     Synthetic,
 }
 
+/// Runtime runner mode used by instance tasks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaRunnerMode {
+    /// Uses an external wa-rs bot process and shared auth store.
+    WaRsBot,
+}
+
 impl WaProtocolMode {
     /// Resolves automatic mode using the websocket URL host.
     pub fn resolve_for_url(self, wa_ws_url: &str) -> WaProtocolMode {
@@ -48,6 +55,12 @@ pub struct Config {
     pub wa_ws_url: String,
     /// WA protocol mode selection policy.
     pub wa_protocol_mode: WaProtocolMode,
+    /// WA runner mode selection policy.
+    pub wa_runner_mode: WaRunnerMode,
+    /// Optional shell command used to spawn the wa-rs bot process per instance.
+    pub wa_rs_bot_command: Option<String>,
+    /// Poll interval for syncing instance status with shared auth store.
+    pub wa_rs_auth_poll_interval_secs: u64,
 }
 
 impl Config {
@@ -72,6 +85,18 @@ impl Config {
             Ok(raw) => parse_protocol_mode(&raw)?,
             Err(_) => WaProtocolMode::Auto,
         };
+        let wa_runner_mode = match std::env::var("WA_RUNNER_MODE") {
+            Ok(raw) => parse_runner_mode(&raw)?,
+            Err(_) => WaRunnerMode::WaRsBot,
+        };
+        let wa_rs_bot_command = std::env::var("WA_RS_BOT_COMMAND")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let wa_rs_auth_poll_interval_secs = match std::env::var("WA_RS_AUTH_POLL_INTERVAL_SECS") {
+            Ok(raw) => u64::from_str(&raw).map_err(|_| ConfigError::InvalidWaRsPollInterval(raw))?,
+            Err(_) => 2,
+        };
 
         Ok(Self {
             bind_addr: SocketAddr::from(([0, 0, 0, 0], port)),
@@ -79,6 +104,9 @@ impl Config {
             database_url,
             wa_ws_url,
             wa_protocol_mode,
+            wa_runner_mode,
+            wa_rs_bot_command,
+            wa_rs_auth_poll_interval_secs,
         })
     }
 }
@@ -92,6 +120,13 @@ fn parse_protocol_mode(raw: &str) -> Result<WaProtocolMode, ConfigError> {
     }
 }
 
+fn parse_runner_mode(raw: &str) -> Result<WaRunnerMode, ConfigError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "wa_rs" | "wa-rs" | "wacore" => Ok(WaRunnerMode::WaRsBot),
+        _ => Err(ConfigError::InvalidRunnerMode(raw.to_owned())),
+    }
+}
+
 /// Errors while loading runtime configuration.
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -101,6 +136,10 @@ pub enum ConfigError {
     InvalidBodyLimit(String),
     #[error("invalid WA_PROTOCOL_MODE value: {0}")]
     InvalidProtocolMode(String),
+    #[error("invalid WA_RUNNER_MODE value: {0}")]
+    InvalidRunnerMode(String),
+    #[error("invalid WA_RS_AUTH_POLL_INTERVAL_SECS value: {0}")]
+    InvalidWaRsPollInterval(String),
     #[error("missing DATABASE_URL environment variable")]
     MissingDatabaseUrl,
 }

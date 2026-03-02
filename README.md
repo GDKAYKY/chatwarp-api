@@ -42,6 +42,7 @@ Entregue:
 - Persistência M4:
   - `src/db/auth_repo.rs` (save/load de `AuthState` por instância em PostgreSQL)
   - `migrations/0001_create_auth_states.sql`
+  - `migrations/0002_create_wa_runner_outbox.sql` (fila outbound para modo `wa_rs`)
 - Testes offline:
   - `tests/app_test.rs`
   - `tests/transport_test.rs`
@@ -70,6 +71,14 @@ Ainda não entregue:
 
 ```bash
 export DATABASE_URL=postgres://user:pass@localhost:5432/chatwarp
+cargo run
+```
+
+Modo runner `wa-rs` (opcional):
+
+```bash
+export WA_RUNNER_MODE=wa_rs
+export WA_RS_BOT_COMMAND='wa-rs-bot --instance "$CHATWARP_INSTANCE_NAME"'
 cargo run
 ```
 
