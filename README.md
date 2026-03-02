@@ -1,4 +1,4 @@
-# whatsapp-rust
+# chatwarp-api
 
 API HTTP em Rust para o runtime Direct WA Client (sem sidecar gRPC).
 

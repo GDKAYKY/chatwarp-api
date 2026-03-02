@@ -8,9 +8,9 @@
 //! ## Random Code (Default)
 //!
 //! ```rust,no_run
-//! use whatsapp_rust::pair_code::PairCodeOptions;
+//! use chatwarp_api::pair_code::PairCodeOptions;
 //!
-//! # async fn example(client: std::sync::Arc<whatsapp_rust::Client>) -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn example(client: std::sync::Arc<chatwarp_api::Client>) -> Result<(), Box<dyn std::error::Error>> {
 //! let options = PairCodeOptions {
 //!     phone_number: "15551234567".to_string(),
 //!     ..Default::default()
@@ -27,9 +27,9 @@
 //! (characters: `123456789ABCDEFGHJKLMNPQRSTVWXYZ` - excludes 0, I, O, U):
 //!
 //! ```rust,no_run
-//! use whatsapp_rust::pair_code::PairCodeOptions;
+//! use chatwarp_api::pair_code::PairCodeOptions;
 //!
-//! # async fn example(client: std::sync::Arc<whatsapp_rust::Client>) -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn example(client: std::sync::Arc<chatwarp_api::Client>) -> Result<(), Box<dyn std::error::Error>> {
 //! let options = PairCodeOptions {
 //!     phone_number: "15551234567".to_string(),
 //!     custom_code: Some("MYCODE12".to_string()), // Must be exactly 8 valid chars
@@ -80,9 +80,9 @@ impl Client {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use whatsapp_rust::pair_code::PairCodeOptions;
+    /// use chatwarp_api::pair_code::PairCodeOptions;
     ///
-    /// # async fn example(client: std::sync::Arc<whatsapp_rust::Client>) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(client: std::sync::Arc<chatwarp_api::Client>) -> Result<(), Box<dyn std::error::Error>> {
     /// let options = PairCodeOptions {
     ///     phone_number: "15551234567".to_string(),
     ///     show_push_notification: true,

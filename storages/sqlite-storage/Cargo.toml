@@ -1,11 +1,11 @@
 [package]
-repository = "https://github.com/GDKAYKY/whatsapp-rust"
-name = "whatsapp-rust-sqlite-storage"
+repository = "https://github.com/GDKAYKY/chatwarp-api"
+name = "chatwarp-api-sqlite-storage"
 version = "0.2.0"
 edition = "2024"
 authors = ["GDKAYKY <kaykyvitorgp@gmail.com>"]
 license = "MIT"
-description = "SQLite storage backend for whatsapp-rust"
+description = "SQLite storage backend for chatwarp-api"
 
 [dependencies]
 async-trait = "0.1.89"

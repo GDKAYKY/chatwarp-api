@@ -6,7 +6,7 @@ pub fn openapi_document() -> Value {
     json!({
       "openapi": "3.0.3",
       "info": {
-        "title": "whatsapp-rust",
+        "title": "chatwarp-api",
         "version": "0.1.0",
         "description": "HTTP API para runtime Direct WA Client (escopo sintético M0-M10)."
       },
@@ -605,7 +605,7 @@ pub fn openapi_document() -> Value {
           "RootResponse": {
             "type": "object",
             "properties": {
-              "name": { "type": "string", "example": "whatsapp-rust" },
+              "name": { "type": "string", "example": "chatwarp-api" },
               "status": { "type": "string", "example": "ok" }
             }
           },

@@ -2,10 +2,10 @@
 pub use warp_core::net::{Transport, TransportEvent, TransportFactory};
 
 #[cfg(feature = "tokio-transport")]
-pub use whatsapp_rust_tokio_transport::{TokioWebSocketTransport, TokioWebSocketTransportFactory};
+pub use chatwarp_api_tokio_transport::{TokioWebSocketTransport, TokioWebSocketTransportFactory};
 
 #[cfg(feature = "ureq-client")]
-pub use whatsapp_rust_ureq_http_client::UreqHttpClient;
+pub use chatwarp_api_ureq_http_client::UreqHttpClient;
 
 #[cfg(test)]
 pub mod mock {

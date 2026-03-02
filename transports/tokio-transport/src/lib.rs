@@ -1,4 +1,4 @@
-/// Tokio-based WebSocket transport implementation for whatsapp-rust
+/// Tokio-based WebSocket transport implementation for chatwarp-api
 ///
 /// This crate provides a concrete implementation of the Transport trait
 /// using tokio-websockets. It handles raw byte transmission without any

@@ -7,7 +7,7 @@ pub mod traits;
 
 // Re-export from the sqlite-storage crate when the feature is enabled
 #[cfg(feature = "sqlite-storage")]
-pub use whatsapp_rust_sqlite_storage::SqliteStore;
+pub use chatwarp_api_sqlite_storage::SqliteStore;
 
 pub use crate::store::traits::*;
 use std::ops::{Deref, DerefMut};

@@ -1,11 +1,11 @@
 
 [package]
-name = "whatsapp-rust"
+name = "chatwarp-api"
 version = "0.2.0"
 edition = "2024"
 authors = ["GDKAYKY <kaykyvitorgp@gmail.com>"]
 license = "MIT"
-repository = "https://github.com/GDKAYKY/whatsapp-rust"
+repository = "https://github.com/GDKAYKY/chatwarp-api"
 readme = "README.md"
 description = "Rust client for WhatsApp Web"
 
@@ -34,13 +34,13 @@ waproto = { path = "./waproto", version = "0.2.0" }
 
 [features]
 danger-skip-tls-verify = [
-    "whatsapp-rust-tokio-transport?/danger-skip-tls-verify",
+    "chatwarp-api-tokio-transport?/danger-skip-tls-verify",
 ]
 default = ["sqlite-storage", "tokio-transport", "ureq-client", "tokio-native"]
-ureq-client = ["dep:whatsapp-rust-ureq-http-client"]
-tokio-transport = ["dep:whatsapp-rust-tokio-transport"]
+ureq-client = ["dep:chatwarp-api-ureq-http-client"]
+tokio-transport = ["dep:chatwarp-api-tokio-transport"]
 signal = ["tokio/signal"]
-sqlite-storage = ["whatsapp-rust-sqlite-storage"]
+sqlite-storage = ["chatwarp-api-sqlite-storage"]
 tokio-native = ["tokio/rt-multi-thread"]
 
 [dependencies]
@@ -75,9 +75,9 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 warp_core = { path = "./warp_core", version = "0.2.0" }
 warp_core-binary = { workspace = true }
 waproto = { workspace = true }
-whatsapp-rust-sqlite-storage = { path = "./storages/sqlite-storage", version = "0.2.0", optional = true }
-whatsapp-rust-tokio-transport = { path = "./transports/tokio-transport", version = "0.2.0", optional = true }
-whatsapp-rust-ureq-http-client = { path = "./http_clients/ureq-client", version = "0.2.0", optional = true }
+chatwarp-api-sqlite-storage = { path = "./storages/sqlite-storage", version = "0.2.0", optional = true }
+chatwarp-api-tokio-transport = { path = "./transports/tokio-transport", version = "0.2.0", optional = true }
+chatwarp-api-ureq-http-client = { path = "./http_clients/ureq-client", version = "0.2.0", optional = true }
 
 [dev-dependencies]
 uuid = { version = "1.0", features = ["v4"] }

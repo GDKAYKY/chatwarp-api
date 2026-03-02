@@ -1,17 +1,17 @@
+use chatwarp_api::bot::{Bot, MessageContext};
+use chatwarp_api::pair_code::PairCodeOptions;
+use chatwarp_api::store::SqliteStore;
+use chatwarp_api::upload::UploadResponse;
+use chatwarp_api_tokio_transport::TokioWebSocketTransportFactory;
+use chatwarp_api_ureq_http_client::UreqHttpClient;
 use chrono::{Local, Utc};
 use log::{error, info};
 use std::io::Cursor;
 use std::sync::Arc;
+use waproto::whatsapp as wa;
 use warp_core::download::{Downloadable, MediaType};
 use warp_core::proto_helpers::MessageExt;
 use warp_core::types::events::Event;
-use waproto::whatsapp as wa;
-use whatsapp_rust::bot::{Bot, MessageContext};
-use whatsapp_rust::pair_code::PairCodeOptions;
-use whatsapp_rust::store::SqliteStore;
-use whatsapp_rust::upload::UploadResponse;
-use whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory;
-use whatsapp_rust_ureq_http_client::UreqHttpClient;
 
 // This is a demo of a simple ping-pong bot with every type of media.
 //

@@ -1,11 +1,11 @@
 [package]
-repository = "https://github.com/GDKAYKY/whatsapp-rust"
-name = "whatsapp-rust-ureq-http-client"
+repository = "https://github.com/GDKAYKY/chatwarp-api"
+name = "chatwarp-api-ureq-http-client"
 version = "0.2.0"
 edition = "2024"
 authors = ["GDKAYKY <kaykyvitorgp@gmail.com>"]
 license = "MIT"
-description = "Ureq-based HTTP client implementation for whatsapp-rust"
+description = "Ureq-based HTTP client implementation for chatwarp-api"
 
 [dependencies]
 anyhow = { version = "1.0", default-features = false }

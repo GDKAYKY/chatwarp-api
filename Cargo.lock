@@ -210,6 +210,86 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "chatwarp-api"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "async-trait",
+ "base64",
+ "bytes",
+ "chatwarp-api-sqlite-storage",
+ "chatwarp-api-tokio-transport",
+ "chatwarp-api-ureq-http-client",
+ "chrono",
+ "dashmap",
+ "env_logger",
+ "hex",
+ "indexmap",
+ "log",
+ "moka",
+ "prost",
+ "rand",
+ "rand_core 0.9.3",
+ "scopeguard",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "uuid",
+ "waproto",
+ "warp_core",
+ "warp_core-binary",
+]
+
+[[package]]
+name = "chatwarp-api-sqlite-storage"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "bincode 2.0.1",
+ "diesel",
+ "diesel_migrations",
+ "libsqlite3-sys",
+ "log",
+ "prost",
+ "serde_json",
+ "tokio",
+ "waproto",
+ "warp_core",
+]
+
+[[package]]
+name = "chatwarp-api-tokio-transport"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "http",
+ "log",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+ "tokio-websockets",
+ "warp_core",
+ "webpki-roots",
+]
+
+[[package]]
+name = "chatwarp-api-ureq-http-client"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "tokio",
+ "ureq",
+ "warp_core",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2324,86 +2404,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2878ef029c47c6e8cf779119f20fcf52bde7ad42a731b2a304bc221df17571e"
 dependencies = [
  "rustls-pki-types",
-]
-
-[[package]]
-name = "whatsapp-rust"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "async-trait",
- "base64",
- "bytes",
- "chrono",
- "dashmap",
- "env_logger",
- "hex",
- "indexmap",
- "log",
- "moka",
- "prost",
- "rand",
- "rand_core 0.9.3",
- "scopeguard",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
- "tokio",
- "uuid",
- "waproto",
- "warp_core",
- "warp_core-binary",
- "whatsapp-rust-sqlite-storage",
- "whatsapp-rust-tokio-transport",
- "whatsapp-rust-ureq-http-client",
-]
-
-[[package]]
-name = "whatsapp-rust-sqlite-storage"
-version = "0.2.0"
-dependencies = [
- "async-trait",
- "bincode 2.0.1",
- "diesel",
- "diesel_migrations",
- "libsqlite3-sys",
- "log",
- "prost",
- "serde_json",
- "tokio",
- "waproto",
- "warp_core",
-]
-
-[[package]]
-name = "whatsapp-rust-tokio-transport"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "async-trait",
- "bytes",
- "futures-util",
- "http",
- "log",
- "rustls",
- "tokio",
- "tokio-rustls",
- "tokio-websockets",
- "warp_core",
- "webpki-roots",
-]
-
-[[package]]
-name = "whatsapp-rust-ureq-http-client"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "tokio",
- "ureq",
- "warp_core",
 ]
 
 [[package]]

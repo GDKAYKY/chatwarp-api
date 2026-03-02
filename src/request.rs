@@ -101,7 +101,7 @@ impl Client {
     /// use warp_core_binary::jid::{Jid, SERVER_JID};
     ///
     /// // This is a simplified example - real usage requires proper setup
-    /// # async fn example(client: &whatsapp_rust::Client) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(client: &chatwarp_api::Client) -> Result<(), Box<dyn std::error::Error>> {
     /// let query_node = NodeBuilder::new("presence")
     ///     .attr("type", "available")
     ///     .build();

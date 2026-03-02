@@ -71,8 +71,8 @@ mod tests {
                 .expect("Failed to create SQLite backend"),
         );
 
-        let transport = whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory::new();
-        let http_client = whatsapp_rust_ureq_http_client::UreqHttpClient::new();
+        let transport = chatwarp_api_tokio_transport::TokioWebSocketTransportFactory::new();
+        let http_client = chatwarp_api_ureq_http_client::UreqHttpClient::new();
         let bot = Bot::builder()
             .with_backend(backend)
             .with_transport_factory(transport)
@@ -100,8 +100,8 @@ mod tests {
                 .expect("Failed to create SQLite backend"),
         );
 
-        let transport = whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory::new();
-        let http_client = whatsapp_rust_ureq_http_client::UreqHttpClient::new();
+        let transport = chatwarp_api_tokio_transport::TokioWebSocketTransportFactory::new();
+        let http_client = chatwarp_api_ureq_http_client::UreqHttpClient::new();
         let bot = Bot::builder()
             .with_backend(backend)
             .with_transport_factory(transport)
@@ -129,8 +129,8 @@ mod tests {
                 .expect("Failed to create SQLite backend"),
         );
 
-        let transport = whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory::new();
-        let http_client = whatsapp_rust_ureq_http_client::UreqHttpClient::new();
+        let transport = chatwarp_api_tokio_transport::TokioWebSocketTransportFactory::new();
+        let http_client = chatwarp_api_ureq_http_client::UreqHttpClient::new();
         let bot = Bot::builder()
             .with_backend(backend)
             .with_transport_factory(transport)

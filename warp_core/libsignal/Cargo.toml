@@ -1,5 +1,5 @@
 [package]
-repository = "https://github.com/GDKAYKY/whatsapp-rust"
+repository = "https://github.com/GDKAYKY/chatwarp-api"
 name = "warp_core-libsignal"
 version = "0.2.0"
 edition = "2024"

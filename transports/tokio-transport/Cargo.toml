@@ -1,11 +1,11 @@
 [package]
-repository = "https://github.com/GDKAYKY/whatsapp-rust"
-name = "whatsapp-rust-tokio-transport"
+repository = "https://github.com/GDKAYKY/chatwarp-api"
+name = "chatwarp-api-tokio-transport"
 version = "0.2.0"
 edition = "2024"
 authors = ["GDKAYKY <kaykyvitorgp@gmail.com>"]
 license = "MIT"
-description = "Tokio-based WebSocket transport for whatsapp-rust"
+description = "Tokio-based WebSocket transport for chatwarp-api"
 
 [features]
 default = []

@@ -247,7 +247,7 @@ impl BotBuilder {
     ///
     /// # Example
     /// ```rust,ignore
-    /// use whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory;
+    /// use chatwarp_api_tokio_transport::TokioWebSocketTransportFactory;
     ///
     /// let bot = Bot::builder()
     ///     .with_backend(backend)
@@ -270,7 +270,7 @@ impl BotBuilder {
     ///
     /// # Example
     /// ```rust,ignore
-    /// use whatsapp_rust_ureq_http_client::UreqHttpClient;
+    /// use chatwarp_api_ureq_http_client::UreqHttpClient;
     ///
     /// let bot = Bot::builder()
     ///     .with_backend(backend)
@@ -359,7 +359,7 @@ impl BotBuilder {
     ///
     /// # Example
     /// ```rust,ignore
-    /// use whatsapp_rust::pair_code::{PairCodeOptions, PlatformId};
+    /// use chatwarp_api::pair_code::{PairCodeOptions, PlatformId};
     ///
     /// let bot = Bot::builder()
     ///     .with_backend(backend)
@@ -455,7 +455,7 @@ mod tests {
     use super::*;
     use crate::http::{HttpClient, HttpRequest, HttpResponse};
     use crate::store::SqliteStore;
-    use whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory;
+    use chatwarp_api_tokio_transport::TokioWebSocketTransportFactory;
 
     // Mock HTTP client for testing
     #[derive(Debug, Clone)]
