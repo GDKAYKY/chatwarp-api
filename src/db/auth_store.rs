@@ -29,6 +29,14 @@ pub trait AuthStore: Send + Sync {
         instance_name: &'a str,
         state: &'a AuthState,
     ) -> BoxFuture<'a, Result<(), AuthStoreError>>;
+
+    /// Queues an outbound payload for external runners (wa-rs mode).
+    fn queue_outbound<'a>(
+        &'a self,
+        instance_name: &'a str,
+        message_id: &'a str,
+        payload: &'a [u8],
+    ) -> BoxFuture<'a, Result<(), AuthStoreError>>;
 }
 
 /// PostgreSQL-backed auth store implementation.
@@ -69,6 +77,20 @@ impl AuthStore for PgAuthStore {
                 .map_err(AuthStoreError::Repository)
         })
     }
+
+    fn queue_outbound<'a>(
+        &'a self,
+        instance_name: &'a str,
+        message_id: &'a str,
+        payload: &'a [u8],
+    ) -> BoxFuture<'a, Result<(), AuthStoreError>> {
+        Box::pin(async move {
+            self.repo
+                .enqueue_outbound(instance_name, message_id, payload)
+                .await
+                .map_err(AuthStoreError::Repository)
+        })
+    }
 }
 
 /// In-memory auth store used by tests and lightweight local runs.
@@ -105,6 +127,15 @@ impl AuthStore for InMemoryAuthStore {
             guard.insert(instance_name.to_owned(), state.clone());
             Ok(())
         })
+    }
+
+    fn queue_outbound<'a>(
+        &'a self,
+        _instance_name: &'a str,
+        _message_id: &'a str,
+        _payload: &'a [u8],
+    ) -> BoxFuture<'a, Result<(), AuthStoreError>> {
+        Box::pin(async move { Ok(()) })
     }
 }
 
