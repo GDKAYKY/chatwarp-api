@@ -1,19 +1,20 @@
-use axum::{Json, http::StatusCode, response::IntoResponse};
-use serde::Serialize;
+use thiserror::Error;
 
-#[derive(Debug, Serialize)]
-struct ErrorBody {
-    error: &'static str,
-    route: String,
+#[derive(Debug, Error)]
+pub enum AppError {
+    #[error("missing required environment variable: {0}")]
+    MissingEnv(&'static str),
+    #[error("invalid environment variable {name}: {reason}")]
+    InvalidEnv { name: &'static str, reason: String },
+    #[error("wa-rs error: {0}")]
+    Wa(String),
 }
 
-/// Standard payload for not implemented routes.
-pub fn not_implemented_response(route: String) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ErrorBody {
-            error: "not_implemented",
-            route,
-        }),
-    )
+impl AppError {
+    pub fn wa<E>(error: E) -> Self
+    where
+        E: std::fmt::Display,
+    {
+        Self::Wa(error.to_string())
+    }
 }

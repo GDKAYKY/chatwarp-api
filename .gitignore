@@ -28,3 +28,7 @@ target
 /example
 /evotylion
 /bailyis
+/.env
+/session.db
+/session.db-shm
+/session.db-wal

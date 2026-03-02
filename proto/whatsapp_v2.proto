@@ -1,7 +1,0 @@
-syntax = "proto3";
-
-package chatwarp.internal;
-
-// Legacy placeholder kept for compatibility with older tooling.
-// Runtime no longer depends on sidecar gRPC code generation.
-message Placeholder {}
