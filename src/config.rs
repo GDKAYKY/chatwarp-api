@@ -1,6 +1,7 @@
 use std::env;
 
 use crate::error::AppError;
+use log::error;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -18,10 +19,7 @@ impl AppConfig {
             let cwd = env::current_dir()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| "unknown".to_string());
-            tracing::error!(
-                "Failed to find WA_RECIPIENT_JID. Current directory: {}",
-                cwd
-            );
+            error!("Failed to find WA_RECIPIENT_JID. Current directory: {}", cwd);
             AppError::MissingEnv("WA_RECIPIENT_JID")
         })?;
 

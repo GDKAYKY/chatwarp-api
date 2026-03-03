@@ -1,24 +1,15 @@
 use crate::api_store::ApiBind;
+use crate::models::webhook_model::WebhookConfig;
 use crate::server::AppState;
 use chatwarp_api_ureq_http_client::UreqHttpClient;
 use chrono::Utc;
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use uuid::Uuid;
 use warp_core::net::{HttpClient, HttpRequest};
-
-#[derive(Clone, Debug)]
-struct WebhookConfig {
-    enabled: bool,
-    url: String,
-    by_events: bool,
-    base64: bool,
-    headers: HashMap<String, String>,
-    events: Option<Vec<String>>,
-}
+use std::collections::HashMap;
 
 pub async fn enqueue(state: &AppState, session: Option<&str>, event: &str, data: Value) {
     let payload = json!({

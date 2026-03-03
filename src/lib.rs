@@ -5,13 +5,16 @@ pub mod types;
 
 pub mod client;
 pub use client::Client;
+pub mod config;
 pub mod download;
+pub mod error;
 pub mod handlers;
 pub mod handshake;
 pub mod jid_utils;
 pub mod keepalive;
 pub mod mediaconn;
 pub mod message;
+pub mod models;
 pub mod pair;
 pub mod pair_code;
 pub mod request;
@@ -31,6 +34,7 @@ pub mod appstate_sync;
 pub mod history_sync;
 pub mod usync;
 pub mod api_store;
+pub mod whatsapp;
 
 pub mod features;
 pub use features::{

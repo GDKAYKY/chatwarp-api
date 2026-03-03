@@ -1,37 +1,50 @@
 use std::sync::Arc;
-use tokio::sync::oneshot;
-use tracing::{error, info};
-use wa_rs::{
-    bot::Bot,
-    store::SqliteStore,
-    transport::{TokioWebSocketTransportFactory, UreqHttpClient},
-    types::events::Event,
-    wa_rs_proto::whatsapp as wa,
-};
 
-use crate::{config::AppConfig, error::AppError};
+use log::{error, info};
 use qrcode::QrCode;
 use qrcode::render::unicode;
+use tokio::sync::oneshot;
+use warp_core::types::events::Event;
+use warp_core_binary::jid::Jid;
 
+use crate::bot::Bot;
+use crate::config::AppConfig;
+use crate::error::AppError;
+#[cfg(feature = "sqlite-storage")]
+use crate::store::SqliteStore;
+#[cfg(feature = "tokio-transport")]
+use chatwarp_api_tokio_transport::TokioWebSocketTransportFactory;
+#[cfg(feature = "ureq-client")]
+use chatwarp_api_ureq_http_client::UreqHttpClient;
+use waproto::whatsapp as wa;
+
+#[cfg(all(
+    feature = "sqlite-storage",
+    feature = "tokio-transport",
+    feature = "ureq-client"
+))]
 pub async fn run_client(config: &AppConfig) -> Result<(), AppError> {
     let (tx, rx) = oneshot::channel::<()>();
     let tx = Arc::new(tokio::sync::Mutex::new(Some(tx)));
 
     let recipient_jid = config
         .recipient_jid
-        .parse::<wa_rs::Jid>()
+        .parse::<Jid>()
         .map_err(|e| AppError::wa(format!("Invalid JID format: {}", e)))?;
 
     let message_text = config.message_text.clone();
     let auth_path = config.auth_storage_path.clone();
 
-    info!(storage = %auth_path, "initializing_whatsapp_client");
+    info!("initializing_whatsapp_client storage={}", auth_path);
 
     let backend = Arc::new(SqliteStore::new(&auth_path).await.map_err(|e| {
-        error!(error = %e, path = %auth_path, "failed_to_initialize_sqlite_store");
+        error!(
+            "failed_to_initialize_sqlite_store error={} path={}",
+            e, auth_path
+        );
         AppError::wa(e)
     })?);
-    info!(path = %auth_path, "sqlite_store_initialized");
+    info!("sqlite_store_initialized path={}", auth_path);
 
     let mut bot = Bot::builder()
         .with_backend(backend)
@@ -58,7 +71,7 @@ pub async fn run_client(config: &AppConfig) -> Result<(), AppError> {
                                 println!("================\n");
                             }
                         }
-                        info!(qr_code = %code, "qr_code_printed");
+                        info!("qr_code_printed qr_code={}", code);
                     }
                     Event::Connected(_) => {
                         info!("connection_state_update: connected");
@@ -66,13 +79,13 @@ pub async fn run_client(config: &AppConfig) -> Result<(), AppError> {
                         let mut msg = wa::Message::default();
                         msg.conversation = Some(message_text);
 
-                        info!(recipient = %recipient_jid, "sending_message");
+                        info!("sending_message recipient={}", recipient_jid);
                         match client.send_message(recipient_jid, msg).await {
                             Ok(id) => {
-                                info!(message_id = %id, "message_sent_successfully");
+                                info!("message_sent_successfully message_id={}", id);
                             }
                             Err(e) => {
-                                error!(error = %e, "message_send_failed");
+                                error!("message_send_failed error={}", e);
                             }
                         }
 
@@ -103,4 +116,15 @@ pub async fn run_client(config: &AppConfig) -> Result<(), AppError> {
 
     info!("client_task_finished");
     Ok(())
+}
+
+#[cfg(not(all(
+    feature = "sqlite-storage",
+    feature = "tokio-transport",
+    feature = "ureq-client"
+)))]
+pub async fn run_client(_config: &AppConfig) -> Result<(), AppError> {
+    Err(AppError::wa(
+        "run_client requires features: `sqlite-storage`, `tokio-transport`, and `ureq-client`",
+    ))
 }
