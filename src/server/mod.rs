@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub mod handlers;
+pub mod messages_worker;
 pub mod routes;
 pub mod webhooks;
 
@@ -22,6 +23,7 @@ pub struct AppState {
     pub instances: DashMap<String, InstanceState>,
     pub sessions_runtime: DashMap<String, SessionRuntime>,
     pub api_store: Arc<dyn ApiStore>,
+    pub clients: DashMap<String, Arc<crate::client::Client>>,
 }
 
 pub struct InstanceState {

@@ -129,6 +129,7 @@ fn main() {
             instances: DashMap::new(),
             sessions_runtime: DashMap::new(),
             api_store: api_store.clone(),
+            clients: DashMap::new(),
         });
 
         // Initialize default instance
@@ -343,6 +344,13 @@ fn main() {
             .build()
             .await
             .expect("Failed to build bot");
+
+        app_state
+            .clients
+            .insert(default_instance_name.clone(), bot.client());
+        tokio::spawn(
+            chatwarp_api::server::messages_worker::spawn_messages_worker(app_state.clone()),
+        );
 
         let bot_handle = match bot.run().await {
             Ok(handle) => handle,
