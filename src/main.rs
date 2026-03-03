@@ -22,6 +22,9 @@ use warp_core::types::events::Event;
 //   cargo run -- -p 15551234567 --code MYCODE12    # Custom 8-char pair code
 //   cargo run -- -p 15551234567 -c MYCODE12        # Short form
 
+use chatwarp_api::server::{AppState, InstanceState, create_router};
+use dashmap::DashMap;
+
 fn main() {
     // Parse CLI arguments for phone number and optional custom code
     let args: Vec<String> = std::env::args().collect();
@@ -55,6 +58,17 @@ fn main() {
         .expect("Failed to build tokio runtime");
 
     rt.block_on(async {
+        // Initialize AppState
+        let app_state = Arc::new(AppState {
+            instances: DashMap::new(),
+        });
+
+        // Initialize default instance
+        let default_instance_name = "default".to_string();
+        app_state
+            .instances
+            .insert(default_instance_name.clone(), InstanceState::new());
+
         let backend = match SqliteStore::new("whatsapp.db").await {
             Ok(store) => Arc::new(store),
             Err(e) => {
@@ -71,8 +85,6 @@ fn main() {
             .with_backend(backend)
             .with_transport_factory(transport_factory)
             .with_http_client(http_client);
-        // Optional: Override the WhatsApp version (normally auto-fetched)
-        // builder = builder.with_version((2, 3000, 1027868167));
 
         // Add pair code authentication if phone number provided
         if let Some(phone) = phone_number {
@@ -83,8 +95,13 @@ fn main() {
             });
         }
 
+        let state_for_bot = app_state.clone();
+        let name_for_bot = default_instance_name.clone();
+
         let mut bot = builder
             .on_event(move |event, client| {
+                let state = state_for_bot.clone();
+                let instance_name = name_for_bot.clone();
                 async move {
                     match event {
                         Event::PairingQrCode { code, timeout } => {
@@ -95,6 +112,13 @@ fn main() {
                             );
                             info!("\n{}\n", code);
                             info!("----------------------------------------");
+
+                            if let Some(instance) = state.instances.get(&instance_name) {
+                                *instance.qr_code.write().await = Some(code);
+                                *instance.connection_state.write().await = "qr_pending".to_string();
+                                let mut count = instance.qr_count.write().await;
+                                *count += 1;
+                            }
                         }
                         Event::PairingCode { code, timeout } => {
                             info!("========================================");
@@ -225,6 +249,10 @@ fn main() {
                         }
                         Event::Connected(_) => {
                             info!("✅ Bot connected successfully!");
+                            if let Some(instance) = state.instances.get(&instance_name) {
+                                *instance.qr_code.write().await = None;
+                                *instance.connection_state.write().await = "connected".to_string();
+                            }
                         }
                         Event::Receipt(receipt) => {
                             info!(
@@ -234,6 +262,10 @@ fn main() {
                         }
                         Event::LoggedOut(_) => {
                             error!("❌ Bot was logged out!");
+                            if let Some(instance) = state.instances.get(&instance_name) {
+                                *instance.connection_state.write().await =
+                                    "disconnected".to_string();
+                            }
                         }
                         _ => {
                             // debug!("Received unhandled event: {:?}", event);
@@ -245,9 +277,6 @@ fn main() {
             .await
             .expect("Failed to build bot");
 
-        // If you want and need, you can get the client:
-        // let client = bot.client();
-
         let bot_handle = match bot.run().await {
             Ok(handle) => handle,
             Err(e) => {
@@ -256,9 +285,26 @@ fn main() {
             }
         };
 
-        bot_handle
-            .await
-            .expect("Bot task should complete without panicking");
+        // Start Axum Server
+        let app = create_router(app_state);
+        let port = std::env::var("PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(8080);
+        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+
+        info!("HTTP server listening on {}", addr);
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // Wait for both tasks
+        tokio::select! {
+            _ = bot_handle => info!("Bot stopped"),
+            _ = server_handle => info!("Server stopped"),
+        }
     });
 }
 
