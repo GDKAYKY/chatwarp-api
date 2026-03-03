@@ -1,3 +1,4 @@
+use chatwarp_api::api_store::{ApiStore, NoopApiStore};
 use chatwarp_api::bot::{Bot, MessageContext};
 use chatwarp_api::pair_code::PairCodeOptions;
 use chatwarp_api::upload::UploadResponse;
@@ -5,6 +6,7 @@ use chatwarp_api_tokio_transport::TokioWebSocketTransportFactory;
 use chatwarp_api_ureq_http_client::UreqHttpClient;
 use chrono::{Local, Utc};
 use log::{error, info};
+use serde_json::json;
 use std::io::Cursor;
 use std::sync::Arc;
 use waproto::whatsapp as wa;
@@ -21,7 +23,7 @@ use warp_core::types::events::Event;
 //   cargo run -- -p 15551234567 --code MYCODE12    # Custom 8-char pair code
 //   cargo run -- -p 15551234567 -c MYCODE12        # Short form
 
-use chatwarp_api::server::{AppState, InstanceState, create_router};
+use chatwarp_api::server::{AppState, InstanceState, SessionRuntime, create_router};
 use dashmap::DashMap;
 
 fn main() {
@@ -57,9 +59,76 @@ fn main() {
         .expect("Failed to build tokio runtime");
 
     rt.block_on(async {
+        let database_url = std::env::var("DATABASE_URL").ok();
+
+        let (backend, api_store): (Arc<dyn chatwarp_api::store::Backend>, Arc<dyn ApiStore>) =
+            if let Some(url) = database_url {
+                if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+                    #[cfg(feature = "postgres-storage")]
+                    {
+                        match chatwarp_api::store::PostgresStore::new(&url).await {
+                            Ok(store) => {
+                                info!("PostgreSQL backend initialized successfully.");
+                                let store = Arc::new(store);
+                                (store.clone(), store as Arc<dyn ApiStore>)
+                            }
+                            Err(e) => {
+                                error!("Failed to create PostgreSQL backend: {}", e);
+                                return;
+                            }
+                        }
+                    }
+                    #[cfg(not(feature = "postgres-storage"))]
+                    {
+                        error!("PostgreSQL support not enabled in this build.");
+                        return;
+                    }
+                } else {
+                    #[cfg(feature = "sqlite-storage")]
+                    {
+                        match chatwarp_api::store::SqliteStore::new(&url).await {
+                            Ok(store) => {
+                                info!("SQLite backend initialized with custom URL: {}", url);
+                                (Arc::new(store), Arc::new(NoopApiStore))
+                            }
+                            Err(e) => {
+                                error!("Failed to create SQLite backend with url {}: {}", url, e);
+                                return;
+                            }
+                        }
+                    }
+                    #[cfg(not(feature = "sqlite-storage"))]
+                    {
+                        error!("SQLite support not enabled in this build.");
+                        return;
+                    }
+                }
+            } else {
+                #[cfg(feature = "sqlite-storage")]
+                {
+                    match chatwarp_api::store::SqliteStore::new("whatsapp.db").await {
+                        Ok(store) => {
+                            info!("SQLite backend initialized with default whatsapp.db");
+                            (Arc::new(store), Arc::new(NoopApiStore))
+                        }
+                        Err(e) => {
+                            error!("Failed to create SQLite backend: {}", e);
+                            return;
+                        }
+                    }
+                }
+                #[cfg(not(feature = "sqlite-storage"))]
+                {
+                    error!("No database URL provided and SQLite support not enabled.");
+                    return;
+                }
+            };
+
         // Initialize AppState
         let app_state = Arc::new(AppState {
             instances: DashMap::new(),
+            sessions_runtime: DashMap::new(),
+            api_store: api_store.clone(),
         });
 
         // Initialize default instance
@@ -67,69 +136,14 @@ fn main() {
         app_state
             .instances
             .insert(default_instance_name.clone(), InstanceState::new());
+        app_state
+            .sessions_runtime
+            .insert(default_instance_name.clone(), SessionRuntime::new());
 
-        let database_url = std::env::var("DATABASE_URL").ok();
-
-        let backend: Arc<dyn chatwarp_api::store::Backend> = if let Some(url) = database_url {
-            if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-                #[cfg(feature = "postgres-storage")]
-                {
-                    match chatwarp_api::store::PostgresStore::new(&url).await {
-                        Ok(store) => {
-                            info!("PostgreSQL backend initialized successfully.");
-                            Arc::new(store)
-                        }
-                        Err(e) => {
-                            error!("Failed to create PostgreSQL backend: {}", e);
-                            return;
-                        }
-                    }
-                }
-                #[cfg(not(feature = "postgres-storage"))]
-                {
-                    error!("PostgreSQL support not enabled in this build.");
-                    return;
-                }
-            } else {
-                #[cfg(feature = "sqlite-storage")]
-                {
-                    match chatwarp_api::store::SqliteStore::new(&url).await {
-                        Ok(store) => {
-                            info!("SQLite backend initialized with custom URL: {}", url);
-                            Arc::new(store)
-                        }
-                        Err(e) => {
-                            error!("Failed to create SQLite backend with url {}: {}", url, e);
-                            return;
-                        }
-                    }
-                }
-                #[cfg(not(feature = "sqlite-storage"))]
-                {
-                    error!("SQLite support not enabled in this build.");
-                    return;
-                }
-            }
-        } else {
-            #[cfg(feature = "sqlite-storage")]
-            {
-                match chatwarp_api::store::SqliteStore::new("whatsapp.db").await {
-                    Ok(store) => {
-                        info!("SQLite backend initialized with default whatsapp.db");
-                        Arc::new(store)
-                    }
-                    Err(e) => {
-                        error!("Failed to create SQLite backend: {}", e);
-                        return;
-                    }
-                }
-            }
-            #[cfg(not(feature = "sqlite-storage"))]
-            {
-                error!("No database URL provided and SQLite support not enabled.");
-                return;
-            }
-        };
+        chatwarp_api::server::webhooks::spawn_worker(app_state.clone());
+        chatwarp_api::server::webhooks::enqueue(&app_state, None, "APPLICATION_STARTUP", json!({}))
+            .await;
+        chatwarp_api::server::webhooks::enqueue(&app_state, None, "MESSAGES_SET", json!({})).await;
 
         let transport_factory = TokioWebSocketTransportFactory::new();
         let http_client = UreqHttpClient::new();
@@ -350,7 +364,9 @@ fn main() {
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 
         let server_handle = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
         });
 
         // Wait for both tasks

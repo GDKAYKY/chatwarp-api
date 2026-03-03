@@ -1,19 +1,26 @@
 use crate::schema::*;
 use async_trait::async_trait;
+use diesel::QueryableByName;
+use diesel::pg::Pg;
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
+use diesel::query_builder::BoxedSqlQuery;
+
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::sql_query;
+use diesel::sql_types::{Bool, Int4, Jsonb, Nullable, Text, Uuid as SqlUuid};
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use log::warn;
 use prost::Message;
+use serde_json::Value;
 use std::sync::Arc;
+use uuid::Uuid;
 use waproto::whatsapp as wa;
 use warp_core::appstate::hash::HashState;
 use warp_core::appstate::processor::AppStateMutationMAC;
 use warp_core::libsignal::protocol::{KeyPair, PrivateKey, PublicKey};
 use warp_core::store::Device as CoreDevice;
-use warp_core::store::error::{Result, StoreError};
+use warp_core::store::error::{Result, StoreError, db_err};
 use warp_core::store::traits::*;
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
@@ -44,6 +51,23 @@ pub struct PostgresStore {
     pub(crate) pool: PgPool,
     pub(crate) db_semaphore: Arc<tokio::sync::Semaphore>,
     device_id: i32,
+}
+
+#[derive(Debug, Clone)]
+pub enum BindValue {
+    Text(String),
+    NullableText(Option<String>),
+    Bool(bool),
+    Int(i32),
+    Json(Value),
+    NullableJson(Option<Value>),
+    Uuid(Uuid),
+}
+
+#[derive(QueryableByName)]
+struct JsonRow {
+    #[diesel(sql_type = Jsonb)]
+    value: Value,
 }
 
 impl PostgresStore {
@@ -959,6 +983,72 @@ impl PostgresStore {
                 .optional()
                 .map_err(|e| StoreError::Database(e.to_string()))?;
             Ok(res)
+        })
+        .await
+        .map_err(|e| StoreError::Database(e.to_string()))?
+    }
+
+    pub async fn api_query_json(&self, sql: &str, binds: Vec<BindValue>) -> Result<Vec<Value>> {
+        let db_semaphore = self.db_semaphore.clone();
+        let pool = self.pool.clone();
+        let sql = sql.to_string();
+        let _permit = db_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| StoreError::Database(e.to_string()))?;
+        tokio::task::spawn_blocking(move || -> Result<Vec<Value>> {
+            let mut conn = pool
+                .get()
+                .map_err(|e| StoreError::Connection(e.to_string()))?;
+
+            let mut query: BoxedSqlQuery<'_, Pg, _> = sql_query(sql).into_boxed::<Pg>();
+            for bind in &binds {
+                query = match bind {
+                    BindValue::Text(v) => query.bind::<Text, _>(v.clone()),
+                    BindValue::NullableText(v) => query.bind::<Nullable<Text>, _>(v.clone()),
+                    BindValue::Bool(v) => query.bind::<Bool, _>(*v),
+                    BindValue::Int(v) => query.bind::<Int4, _>(*v),
+                    BindValue::Json(v) => query.bind::<Jsonb, _>(v.clone()),
+                    BindValue::NullableJson(v) => query.bind::<Nullable<Jsonb>, _>(v.clone()),
+                    BindValue::Uuid(v) => query.bind::<SqlUuid, _>(v),
+                };
+            }
+
+            let rows: Vec<JsonRow> = query.load(&mut conn).map_err(db_err)?;
+            Ok(rows.into_iter().map(|row| row.value).collect())
+        })
+        .await
+        .map_err(|e| StoreError::Database(e.to_string()))?
+    }
+
+    pub async fn api_execute(&self, sql: &str, binds: Vec<BindValue>) -> Result<usize> {
+        let db_semaphore = self.db_semaphore.clone();
+        let pool = self.pool.clone();
+        let sql = sql.to_string();
+        let _permit = db_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| StoreError::Database(e.to_string()))?;
+        tokio::task::spawn_blocking(move || -> Result<usize> {
+            let mut conn = pool
+                .get()
+                .map_err(|e| StoreError::Connection(e.to_string()))?;
+            let mut query: BoxedSqlQuery<'_, Pg, _> = sql_query(sql).into_boxed::<Pg>();
+            for bind in &binds {
+                query = match bind {
+                    BindValue::Text(v) => query.bind::<Text, _>(v.clone()),
+                    BindValue::NullableText(v) => query.bind::<Nullable<Text>, _>(v.clone()),
+                    BindValue::Bool(v) => query.bind::<Bool, _>(*v),
+                    BindValue::Int(v) => query.bind::<Int4, _>(*v),
+                    BindValue::Json(v) => query.bind::<Jsonb, _>(v.clone()),
+                    BindValue::NullableJson(v) => query.bind::<Nullable<Jsonb>, _>(v.clone()),
+                    BindValue::Uuid(v) => query.bind::<SqlUuid, _>(v),
+                };
+            }
+
+            query.execute(&mut conn).map_err(db_err)
         })
         .await
         .map_err(|e| StoreError::Database(e.to_string()))?

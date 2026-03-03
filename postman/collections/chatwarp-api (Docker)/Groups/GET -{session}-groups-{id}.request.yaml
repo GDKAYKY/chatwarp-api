@@ -1,0 +1,10 @@
+$kind: http-request
+name: GET /{session}/groups/{id}
+url: "{{base_url}}/:session/groups/:id"
+method: GET
+scripts:
+  - type: afterResponse
+    code: pm.test('status is not 500', function () {
+      pm.response.to.not.have.status(500); });
+    language: text/javascript
+order: 7000

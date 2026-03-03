@@ -329,6 +329,7 @@ dependencies = [
  "scopeguard",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.17",
  "tokio",
  "tower-http",
@@ -350,6 +351,7 @@ dependencies = [
  "prost",
  "serde_json",
  "tokio",
+ "uuid",
  "waproto",
  "warp_core",
 ]
@@ -649,8 +651,10 @@ dependencies = [
  "libsqlite3-sys",
  "pq-sys",
  "r2d2",
+ "serde_json",
  "sqlite-wasm-rs",
  "time",
+ "uuid",
 ]
 
 [[package]]
@@ -2613,6 +2617,7 @@ checksum = "e2e054861b4bd027cd373e18e8d8d8e6548085000e41290d95ce0c373a654b4a"
 dependencies = [
  "getrandom 0.3.4",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 

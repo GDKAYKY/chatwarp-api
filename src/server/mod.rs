@@ -1,3 +1,4 @@
+use crate::api_store::ApiStore;
 use axum::{
     Router,
     extract::State,
@@ -6,6 +7,7 @@ use axum::{
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose};
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use image::Luma;
 use qrcode::QrCode;
@@ -13,15 +15,38 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub mod handlers;
+pub mod routes;
+pub mod webhooks;
 
 pub struct AppState {
     pub instances: DashMap<String, InstanceState>,
+    pub sessions_runtime: DashMap<String, SessionRuntime>,
+    pub api_store: Arc<dyn ApiStore>,
 }
 
 pub struct InstanceState {
     pub qr_code: Arc<RwLock<Option<String>>>,
     pub qr_count: Arc<RwLock<u32>>,
     pub connection_state: Arc<RwLock<String>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionRuntime {
+    pub connection_state: String,
+    pub qr_code: Option<String>,
+    pub pair_code: Option<String>,
+    pub last_seen: Option<DateTime<Utc>>,
+}
+
+impl SessionRuntime {
+    pub fn new() -> Self {
+        Self {
+            connection_state: "disconnected".to_string(),
+            qr_code: None,
+            pair_code: None,
+            last_seen: None,
+        }
+    }
 }
 
 impl InstanceState {
@@ -34,12 +59,15 @@ impl InstanceState {
     }
 }
 
-pub fn create_router(state: Arc<AppState>) -> Router {
-    Router::new()
+pub fn create_router(state: Arc<AppState>) -> Router<()> {
+    Router::<Arc<AppState>>::new()
+        .merge(routes::router())
         .route("/", get(root_handler))
         .route("/healthz", get(health_handler))
         .route("/readyz", get(ready_handler))
+        .route("/openapi.json", get(handlers::openapi_handler))
         .route("/docs/openapi.json", get(handlers::openapi_handler))
+        .route("/swagger", get(handlers::swagger_handler))
         .route("/docs/swagger", get(handlers::swagger_handler))
         .route("/metrics", get(handlers::metrics_handler))
         // Instance routes

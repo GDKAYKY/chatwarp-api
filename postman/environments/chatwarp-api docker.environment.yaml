@@ -1,0 +1,41 @@
+name: chatwarp-api docker
+values:
+  - key: base_url
+    value: 'http://localhost:8080'
+    enabled: true
+  - key: instance_name
+    value: wa1
+    enabled: true
+  - key: to_jid
+    value: 5511999999999@s.whatsapp.net
+    enabled: true
+  - key: message_text
+    value: hello from postman
+    enabled: true
+  - key: remote_jid
+    value: 5511999999999@s.whatsapp.net
+    enabled: true
+  - key: group_subject
+    value: Postman Group
+    enabled: true
+  - key: participant_1
+    value: 5511888888888@s.whatsapp.net
+    enabled: true
+  - key: participant_2
+    value: 5511777777777@s.whatsapp.net
+    enabled: true
+  - key: last_request_id
+    value: ''
+    enabled: true
+  - key: last_qr
+    value: ''
+    enabled: true
+  - key: last_connection_state
+    value: ''
+    enabled: true
+  - key: last_message_id
+    value: ''
+    enabled: true
+  - key: session
+    value: ''
+    enabled: true

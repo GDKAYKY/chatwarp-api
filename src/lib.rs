@@ -30,6 +30,7 @@ pub mod retry;
 pub mod appstate_sync;
 pub mod history_sync;
 pub mod usync;
+pub mod api_store;
 
 pub mod features;
 pub use features::{

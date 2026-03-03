@@ -7,3 +7,4 @@ mod postgres_store;
 mod schema;
 
 pub use postgres_store::PostgresStore;
+pub use postgres_store::BindValue;
