@@ -1,6 +1,6 @@
 use crate::client::Client;
-use crate::jid_utils::server_jid;
 use crate::request::{InfoQuery, IqError};
+use crate::utils::jid_utils::server_jid;
 use serde::Deserialize;
 use std::time::{Duration, Instant};
 use warp_core_binary::builder::NodeBuilder;

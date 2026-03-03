@@ -1,5 +1,5 @@
 use crate::client::Client;
-use crate::jid_utils::server_jid;
+use crate::utils::jid_utils::server_jid;
 use crate::request::InfoQuery;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

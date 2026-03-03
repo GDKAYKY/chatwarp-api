@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      cache_from:
+        - type=local,src=/tmp/docker-cache
+      cache_to:
+        - type=local,dest=/tmp/docker-cache,mode=max
     image: chatwarp-api:local
     container_name: chatwarp-api
     restart: unless-stopped
@@ -26,9 +30,24 @@ services:
       start_period: 10s
     networks:
       - chatwarp-net
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - WEBHOOK_URL=http://localhost:5678/
+    volumes:
+      - n8n-data:/home/node/.n8n
+    networks:
+      - chatwarp-net
 
 volumes:
   chatwarp-data:
+  n8n-data:
 
 networks:
   chatwarp-net:

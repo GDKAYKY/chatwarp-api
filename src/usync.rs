@@ -1,5 +1,5 @@
 use crate::client::Client;
-use crate::jid_utils::server_jid;
+use crate::utils::jid_utils::server_jid;
 use log::{debug, warn};
 use std::collections::HashSet;
 use warp_core_binary::jid::Jid;

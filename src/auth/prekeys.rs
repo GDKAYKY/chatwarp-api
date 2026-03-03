@@ -1,5 +1,5 @@
 use crate::client::Client;
-use crate::jid_utils::server_jid;
+use crate::utils::jid_utils::server_jid;
 use log;
 use warp_core::libsignal::protocol::PreKeyBundle;
 use warp_core_binary::jid::Jid;

@@ -9,10 +9,10 @@ use axum::{
 use serde_json::json;
 
 mod apps;
+mod auth;
+mod chat;
 mod calls;
 mod channels;
-mod chats;
-mod chatting;
 mod contacts;
 mod events;
 mod groups;
@@ -21,7 +21,6 @@ mod keys;
 mod labels;
 mod media;
 mod observability;
-mod pairing;
 mod presence;
 mod profile;
 mod sessions;
@@ -49,8 +48,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/sessions/stop", post(not_implemented))
         .route("/sessions/logout", post(not_implemented))
         // Pairing
-        .route("/:session/auth/qr", get(pairing::get_qr))
-        .route("/:session/auth/request-code", post(pairing::request_code))
+        .route("/:session/auth/qr", get(auth::get_qr))
+        .route("/:session/auth/request-code", post(auth::request_code))
         .route("/screenshot", get(not_implemented))
         // Profile
         .route("/:session/profile", get(profile::get_profile))
@@ -61,28 +60,28 @@ pub fn router() -> Router<Arc<AppState>> {
             put(profile::update_picture).delete(not_implemented),
         )
         // Chatting
-        .route("/sendText", post(chatting::send_text).get(not_implemented))
-        .route("/sendImage", post(chatting::send_image))
-        .route("/sendFile", post(chatting::send_file))
-        .route("/sendVoice", post(chatting::send_voice))
-        .route("/sendVideo", post(chatting::send_video))
-        .route("/send/link-custom-preview", post(chatting::send_link_custom_preview))
-        .route("/sendButtons", post(chatting::send_buttons))
-        .route("/sendList", post(chatting::send_list))
-        .route("/forwardMessage", post(chatting::forward_message))
-        .route("/sendSeen", post(chatting::send_seen))
-        .route("/startTyping", post(chatting::start_typing))
-        .route("/stopTyping", post(chatting::stop_typing))
-        .route("/reaction", put(chatting::reaction))
-        .route("/star", put(chatting::star))
-        .route("/sendPoll", post(chatting::send_poll))
-        .route("/sendPollVote", post(chatting::send_poll_vote))
-        .route("/sendLocation", post(chatting::send_location))
-        .route("/sendContactVcard", post(chatting::send_contact_vcard))
+        .route("/sendText", post(chat::chat_manager::send_text).get(not_implemented))
+        .route("/sendImage", post(chat::chat_manager::send_image))
+        .route("/sendFile", post(chat::chat_manager::send_file))
+        .route("/sendVoice", post(chat::chat_manager::send_voice))
+        .route("/sendVideo", post(chat::chat_manager::send_video))
+        .route("/send/link-custom-preview", post(chat::chat_manager::send_link_custom_preview))
+        .route("/sendButtons", post(chat::chat_manager::send_buttons))
+        .route("/sendList", post(chat::chat_manager::send_list))
+        .route("/forwardMessage", post(chat::chat_manager::forward_message))
+        .route("/sendSeen", post(chat::chat_manager::send_seen))
+        .route("/startTyping", post(chat::chat_manager::start_typing))
+        .route("/stopTyping", post(chat::chat_manager::stop_typing))
+        .route("/reaction", put(chat::chat_manager::reaction))
+        .route("/star", put(chat::chat_manager::star))
+        .route("/sendPoll", post(chat::chat_manager::send_poll))
+        .route("/sendPollVote", post(chat::chat_manager::send_poll_vote))
+        .route("/sendLocation", post(chat::chat_manager::send_location))
+        .route("/sendContactVcard", post(chat::chat_manager::send_contact_vcard))
         .route("/send/buttons/reply", post(not_implemented))
-        .route("/messages", get(chatting::list_messages_handler))
+        .route("/messages", get(chat::chat_manager::list_messages_handler))
         .route("/checkNumberStatus", get(not_implemented))
-        .route("/reply", post(chatting::reply_message))
+        .route("/reply", post(chat::chat_manager::reply_message))
         .route("/sendLinkPreview", post(not_implemented))
         // Presence
         .route("/:session/presence", post(presence::set_presence).get(not_implemented))
@@ -115,15 +114,15 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/:session/status/delete", post(status::status_delete))
         .route("/:session/status/new-message-id", get(not_implemented))
         // Chats
-        .route("/:session/chats", get(chats::list_chats))
-        .route("/:session/chats/overview", get(chats::overview).post(not_implemented))
+        .route("/:session/chats", get(chat::messaging::list_chats))
+        .route("/:session/chats/overview", get(chat::messaging::overview).post(not_implemented))
         .route("/:session/chats/:chatId", delete(not_implemented))
         .route("/:session/chats/:chatId/picture", get(not_implemented))
         .route(
             "/:session/chats/:chatId/messages",
-            get(chats::messages).delete(not_implemented),
+            get(chat::messaging::messages).delete(not_implemented),
         )
-        .route("/:session/chats/:chatId/messages/read", post(chats::read_messages))
+        .route("/:session/chats/:chatId/messages/read", post(chat::messaging::read_messages))
         .route(
             "/:session/chats/:chatId/messages/:messageId",
             get(not_implemented).delete(not_implemented).put(not_implemented),

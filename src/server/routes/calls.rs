@@ -1,7 +1,12 @@
 use crate::api_store::ApiBind;
-use crate::server::webhooks;
 use crate::server::AppState;
-use axum::{Json, extract::{Path, State}, http::StatusCode, response::IntoResponse};
+use crate::server::webhooks;
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde_json::{Value, json};
 use std::sync::Arc;
 

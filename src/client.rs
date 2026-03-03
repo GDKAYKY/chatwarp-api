@@ -1,8 +1,9 @@
 mod context_impl;
 mod device_registry;
+mod keepalive;
 mod lid_pn;
 mod sender_keys;
-mod sessions;
+pub(crate) mod sessions;
 
 use crate::handshake;
 use crate::lid_pn_cache::LidPnCache;
@@ -18,7 +19,7 @@ use warp_core_binary::jid::JidExt;
 use warp_core_binary::node::Node;
 
 use crate::appstate_sync::AppStateProcessor;
-use crate::jid_utils::server_jid;
+use crate::utils::jid_utils::server_jid;
 use crate::store::{commands::DeviceCommand, persistence_manager::PersistenceManager};
 use crate::types::enc_handler::EncHandler;
 use crate::types::events::{ConnectFailureReason, Event};

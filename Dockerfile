@@ -1,7 +1,6 @@
 # Build stage
 FROM rustlang/rust:nightly-bookworm AS builder
 
-# Install system dependencies for build
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -12,10 +11,47 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy the workspace configuration and toolchain
+# Copia manifestos do workspace
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 
-# Copy workspace members
+# Copia Cargo.toml de cada membro do workspace (paths exatos do Cargo.toml)
+COPY http_clients/ureq-client/Cargo.toml ./http_clients/ureq-client/Cargo.toml
+COPY storages/sqlite-storage/Cargo.toml ./storages/sqlite-storage/Cargo.toml
+COPY storages/postgres-storage/Cargo.toml ./storages/postgres-storage/Cargo.toml
+COPY transports/tokio-transport/Cargo.toml ./transports/tokio-transport/Cargo.toml
+COPY waproto/Cargo.toml ./waproto/Cargo.toml
+COPY warp_core/Cargo.toml ./warp_core/Cargo.toml
+COPY warp_core/appstate/Cargo.toml ./warp_core/appstate/Cargo.toml
+COPY warp_core/binary/Cargo.toml ./warp_core/binary/Cargo.toml
+COPY warp_core/libsignal/Cargo.toml ./warp_core/libsignal/Cargo.toml
+
+# Cria src/lib.rs falsos para cachear dependências
+RUN mkdir -p src \
+    http_clients/ureq-client/src \
+    storages/sqlite-storage/src \
+    storages/postgres-storage/src \
+    transports/tokio-transport/src \
+    waproto/src \
+    warp_core/src \
+    warp_core/appstate/src \
+    warp_core/binary/src \
+    warp_core/libsignal/src \
+    && echo "fn main() {}" > src/main.rs \
+    && touch \
+        http_clients/ureq-client/src/lib.rs \
+        storages/sqlite-storage/src/lib.rs \
+        storages/postgres-storage/src/lib.rs \
+        transports/tokio-transport/src/lib.rs \
+        waproto/src/lib.rs \
+        warp_core/src/lib.rs \
+        warp_core/appstate/src/lib.rs \
+        warp_core/binary/src/lib.rs \
+        warp_core/libsignal/src/lib.rs
+
+# Compila só as dependências (fica cacheado!)
+RUN cargo build --release --bin chatwarp-api --all-features || true
+
+# Agora copia o código real
 COPY http_clients/ ./http_clients/
 COPY storages/ ./storages/
 COPY transports/ ./transports/
@@ -23,43 +59,30 @@ COPY waproto/ ./waproto/
 COPY warp_core/ ./warp_core/
 COPY src/ ./src/
 
-# Optimized build for specific binary with all features
+# Força recompilação do seu código
+RUN find . -name "*.rs" -not -path "*/target/*" | xargs touch
+
 RUN cargo build --release --bin chatwarp-api --all-features
 
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    libssl3 \
-    libpq5 \
-    sqlite3 \
+    ca-certificates curl libssl3 libpq5 sqlite3 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 appuser
 
 WORKDIR /app
-
-# Copy binary from builder
 COPY --from=builder /app/target/release/chatwarp-api /usr/local/bin/chatwarp-api
-
-# Create data directory for SQLite fallback
 RUN mkdir -p /app/data && chown appuser:appuser /app/data
 
-# Environment configuration
 ENV PORT=8080
 ENV RUST_LOG=info
-# DATABASE_URL should be set in Render/Docker environment for Supabase
-# Example: postgres://postgres.your-project:password@aws-0-us-east-1.pooler.supabase.com:5432/postgres
 EXPOSE 8080
-
 USER appuser
 
-# Healthcheck
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:${PORT}/healthz || exit 1
 
-# Start application
 CMD ["chatwarp-api"]

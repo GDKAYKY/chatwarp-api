@@ -19,7 +19,7 @@ As rotas estão divididas por módulos e marcadas com seu status de implementaç
 - ❌ `POST /sessions/stop`
 - ❌ `POST /sessions/logout`
 
-## Pairing
+## Auth
 
 - ✅ `GET /:session/auth/qr`
 - ✅ `POST /:session/auth/request-code`
@@ -33,7 +33,7 @@ As rotas estão divididas por módulos e marcadas com seu status de implementaç
 - ✅ `PUT /:session/profile/picture`
 - ❌ `DELETE /:session/profile/picture`
 
-## Chatting
+## Chat Manager
 
 - ✅ `POST /sendText`
 - ❌ `GET /sendText`
@@ -93,7 +93,7 @@ As rotas estão divididas por módulos e marcadas com seu status de implementaç
 - ✅ `POST /:session/status/delete`
 - ❌ `GET /:session/status/new-message-id`
 
-## Chats
+## Messaging
 
 - ✅ `GET /:session/chats`
 - ✅ `GET /:session/chats/overview`

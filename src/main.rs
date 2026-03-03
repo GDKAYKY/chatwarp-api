@@ -182,11 +182,18 @@ fn main() {
                             info!("----------------------------------------");
 
                             if let Some(instance) = state.instances.get(&instance_name) {
-                                *instance.qr_code.write().await = Some(code);
+                                *instance.qr_code.write().await = Some(code.clone());
                                 *instance.connection_state.write().await = "qr_pending".to_string();
                                 let mut count = instance.qr_count.write().await;
                                 *count += 1;
                             }
+
+                            chatwarp_api::server::webhooks::enqueue(
+                                &state,
+                                Some(&instance_name),
+                                "QRCODE_UPDATED",
+                                json!({ "qrcode": code, "timeout": timeout.as_secs() })
+                            ).await;
                         }
                         Event::PairingCode { code, timeout } => {
                             info!("========================================");
@@ -202,10 +209,36 @@ fn main() {
 
                         Event::Message(msg, info) => {
                             let ctx = MessageContext {
-                                message: msg,
-                                info,
-                                client,
+                                message: msg.clone(),
+                                info: info.clone(),
+                                client: client.clone(),
                             };
+
+                            let sender_jid = info.source.sender.to_string();
+                            let remote_jid = info.source.chat.to_string();
+                            let is_from_me = info.source.is_from_me;
+                            let text_content = msg.text_content().unwrap_or_default();
+
+                            chatwarp_api::server::webhooks::enqueue(
+                                &state,
+                                Some(&instance_name),
+                                "MESSAGES_UPSERT",
+                                json!({
+                                    "messages": [{
+                                        "key": {
+                                            "remoteJid": remote_jid,
+                                            "fromMe": is_from_me,
+                                            "id": info.id,
+                                            "participant": if is_from_me { None } else { Some(sender_jid.clone()) }
+                                        },
+                                        "message": {
+                                            "conversation": text_content
+                                        },
+                                        // Include raw struct format for backward compatibility if needed, but above object looks more like Evolution/Baileys
+                                    }],
+                                    "type": "notify"
+                                })
+                            ).await;
 
                             if let Some(media_ping_request) = get_pingable_media(&ctx.message) {
                                 handle_media_ping(&ctx, media_ping_request).await;
@@ -321,6 +354,12 @@ fn main() {
                                 *instance.qr_code.write().await = None;
                                 *instance.connection_state.write().await = "connected".to_string();
                             }
+                            chatwarp_api::server::webhooks::enqueue(
+                                &state,
+                                Some(&instance_name),
+                                "CONNECTION_UPDATE",
+                                json!({ "action": "update", "state": "open" })
+                            ).await;
                         }
                         Event::Receipt(receipt) => {
                             info!(
@@ -334,6 +373,12 @@ fn main() {
                                 *instance.connection_state.write().await =
                                     "disconnected".to_string();
                             }
+                            chatwarp_api::server::webhooks::enqueue(
+                                &state,
+                                Some(&instance_name),
+                                "CONNECTION_UPDATE",
+                                json!({ "action": "update", "state": "close", "reason": "loggedOut" })
+                            ).await;
                         }
                         _ => {
                             // debug!("Received unhandled event: {:?}", event);

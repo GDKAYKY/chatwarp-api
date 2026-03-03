@@ -13,6 +13,10 @@ use warp_core_binary::jid::Jid;
 
 use super::Client;
 
+/// Maximum number of JIDs to include in a single prekey fetch request.
+/// Matches WhatsApp Web's SESSION_CHECK_BATCH constant.
+pub const SESSION_CHECK_BATCH_SIZE: usize = 50;
+
 impl Client {
     /// Wait for offline message delivery to complete.
     /// Matches WhatsApp Web's WAWebEventsWaitForOfflineDeliveryEnd.waitForOfflineDeliveryEnd().
@@ -81,7 +85,7 @@ impl Client {
         }
 
         // 4. Fetch and establish sessions (with batching)
-        for batch in jids_needing_sessions.chunks(crate::session::SESSION_CHECK_BATCH_SIZE) {
+        for batch in jids_needing_sessions.chunks(SESSION_CHECK_BATCH_SIZE) {
             self.fetch_and_establish_sessions(batch).await?;
         }
 
