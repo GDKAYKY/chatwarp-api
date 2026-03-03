@@ -6,10 +6,13 @@ services:
     image: chatwarp-api:local
     container_name: chatwarp-api
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       PORT: 8080
-      # Using SQLite as per main.rs setup
-      DATABASE_PATH: /app/data/whatsapp.db
+      # Provide DATABASE_URL for Postgres (e.g. Supabase)
+      # DATABASE_URL: postgres://postgres.your-project:password@aws-0-pooler.supabase.com:5432/postgres
+      # Default fallback to SQLite if DATABASE_URL is not set or not starting with postgres://
       RUST_LOG: info
     ports:
       - "8080:8080"

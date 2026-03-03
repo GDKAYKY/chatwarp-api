@@ -1,6 +1,5 @@
 use chatwarp_api::bot::{Bot, MessageContext};
 use chatwarp_api::pair_code::PairCodeOptions;
-use chatwarp_api::store::SqliteStore;
 use chatwarp_api::upload::UploadResponse;
 use chatwarp_api_tokio_transport::TokioWebSocketTransportFactory;
 use chatwarp_api_ureq_http_client::UreqHttpClient;
@@ -69,14 +68,68 @@ fn main() {
             .instances
             .insert(default_instance_name.clone(), InstanceState::new());
 
-        let backend = match SqliteStore::new("whatsapp.db").await {
-            Ok(store) => Arc::new(store),
-            Err(e) => {
-                error!("Failed to create SQLite backend: {}", e);
+        let database_url = std::env::var("DATABASE_URL").ok();
+
+        let backend: Arc<dyn chatwarp_api::store::Backend> = if let Some(url) = database_url {
+            if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+                #[cfg(feature = "postgres-storage")]
+                {
+                    match chatwarp_api::store::PostgresStore::new(&url).await {
+                        Ok(store) => {
+                            info!("PostgreSQL backend initialized successfully.");
+                            Arc::new(store)
+                        }
+                        Err(e) => {
+                            error!("Failed to create PostgreSQL backend: {}", e);
+                            return;
+                        }
+                    }
+                }
+                #[cfg(not(feature = "postgres-storage"))]
+                {
+                    error!("PostgreSQL support not enabled in this build.");
+                    return;
+                }
+            } else {
+                #[cfg(feature = "sqlite-storage")]
+                {
+                    match chatwarp_api::store::SqliteStore::new(&url).await {
+                        Ok(store) => {
+                            info!("SQLite backend initialized with custom URL: {}", url);
+                            Arc::new(store)
+                        }
+                        Err(e) => {
+                            error!("Failed to create SQLite backend with url {}: {}", url, e);
+                            return;
+                        }
+                    }
+                }
+                #[cfg(not(feature = "sqlite-storage"))]
+                {
+                    error!("SQLite support not enabled in this build.");
+                    return;
+                }
+            }
+        } else {
+            #[cfg(feature = "sqlite-storage")]
+            {
+                match chatwarp_api::store::SqliteStore::new("whatsapp.db").await {
+                    Ok(store) => {
+                        info!("SQLite backend initialized with default whatsapp.db");
+                        Arc::new(store)
+                    }
+                    Err(e) => {
+                        error!("Failed to create SQLite backend: {}", e);
+                        return;
+                    }
+                }
+            }
+            #[cfg(not(feature = "sqlite-storage"))]
+            {
+                error!("No database URL provided and SQLite support not enabled.");
                 return;
             }
         };
-        info!("SQLite backend initialized successfully.");
 
         let transport_factory = TokioWebSocketTransportFactory::new();
         let http_client = UreqHttpClient::new();

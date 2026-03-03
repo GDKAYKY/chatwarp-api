@@ -5,9 +5,12 @@ pub mod signal;
 pub mod signal_adapter;
 pub mod traits;
 
-// Re-export from the sqlite-storage crate when the feature is enabled
+// Re-export from the storage crates when the features are enabled
 #[cfg(feature = "sqlite-storage")]
 pub use chatwarp_api_sqlite_storage::SqliteStore;
+
+#[cfg(feature = "postgres-storage")]
+pub use chatwarp_api_postgres_storage::PostgresStore;
 
 pub use crate::store::traits::*;
 use std::ops::{Deref, DerefMut};

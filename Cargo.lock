@@ -258,6 +258,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "byteorder-lite"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -304,6 +310,7 @@ dependencies = [
  "axum",
  "base64",
  "bytes",
+ "chatwarp-api-postgres-storage",
  "chatwarp-api-sqlite-storage",
  "chatwarp-api-tokio-transport",
  "chatwarp-api-ureq-http-client",
@@ -329,6 +336,22 @@ dependencies = [
  "waproto",
  "warp_core",
  "warp_core-binary",
+]
+
+[[package]]
+name = "chatwarp-api-postgres-storage"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "bincode 2.0.1",
+ "diesel",
+ "diesel_migrations",
+ "log",
+ "prost",
+ "serde_json",
+ "tokio",
+ "waproto",
+ "warp_core",
 ]
 
 [[package]]
@@ -617,9 +640,14 @@ version = "2.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e130c806dccc85428c564f2dc5a96e05b6615a27c9a28776bd7761a9af4bb552"
 dependencies = [
+ "bitflags",
+ "byteorder",
+ "chrono",
  "diesel_derives",
  "downcast-rs",
+ "itoa",
  "libsqlite3-sys",
+ "pq-sys",
  "r2d2",
  "sqlite-wasm-rs",
  "time",
@@ -1654,6 +1682,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "pq-sys"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "574ddd6a267294433f140b02a726b0640c43cf7c6f717084684aaa3b285aba61"
+dependencies = [
+ "libc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
