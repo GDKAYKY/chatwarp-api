@@ -19,12 +19,12 @@ use warp_core_binary::jid::JidExt;
 use warp_core_binary::node::Node;
 
 use crate::appstate_sync::AppStateProcessor;
-use crate::utils::jid_utils::server_jid;
 use crate::store::{commands::DeviceCommand, persistence_manager::PersistenceManager};
 use crate::types::enc_handler::EncHandler;
 use crate::types::events::{ConnectFailureReason, Event};
+use crate::utils::jid_utils::server_jid;
 
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use rand::RngCore;
 use scopeguard;
@@ -37,9 +37,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use thiserror::Error;
 use tokio::sync::{Mutex, Notify, OnceCell, RwLock, mpsc};
 use tokio::time::{Duration, sleep};
+use waproto::whatsapp as wa;
 use warp_core::appstate::patch_decode::WAPatchName;
 use warp_core::client::context::GroupInfo;
-use waproto::whatsapp as wa;
 
 use crate::socket::{NoiseSocket, SocketError, error::EncryptSendError};
 use crate::sync_task::MajorSyncTask;
@@ -350,6 +350,7 @@ impl Client {
     fn create_stanza_router() -> crate::handlers::router::StanzaRouter {
         use crate::handlers::{
             basic::{AckHandler, FailureHandler, StreamErrorHandler, SuccessHandler},
+            chatstate::ChatstateHandler,
             ib::IbHandler,
             iq::IqHandler,
             message::MessageHandler,
@@ -371,32 +372,31 @@ impl Client {
         router.register(Arc::new(IbHandler));
         router.register(Arc::new(NotificationHandler));
         router.register(Arc::new(AckHandler));
+        router.register(Arc::new(ChatstateHandler));
 
         // Register unimplemented handlers
         router.register(Arc::new(UnimplementedHandler::for_call()));
         router.register(Arc::new(UnimplementedHandler::for_presence()));
-        router.register(Arc::new(UnimplementedHandler::for_chatstate()));
+        // chatstate is handled by ChatstateHandler
 
         router
     }
 
     pub async fn run(self: &Arc<Self>) {
         if self.is_running.swap(true, Ordering::SeqCst) {
-            warn!("Client `run` method called while already running.");
+            warn!("Client run() called while already running");
             return;
         }
         while self.is_running.load(Ordering::Relaxed) {
             self.expected_disconnect.store(false, Ordering::Relaxed);
 
-            if self.connect().await.is_err() {
-                error!("Failed to connect, will retry...");
+            if let Err(err) = self.connect().await {
+                error!(error = ?err, "Failed to connect, will retry");
             } else {
                 if self.read_messages_loop().await.is_err() {
-                    warn!(
-                        "Message loop exited with an error. Will attempt to reconnect if enabled."
-                    );
+                    warn!("Message loop exited with an error; will attempt reconnect if enabled");
                 } else if self.expected_disconnect.load(Ordering::Relaxed) {
-                    debug!("Message loop exited gracefully (expected disconnect).");
+                    debug!("Message loop exited gracefully (expected disconnect)");
                 } else {
                     info!("Message loop exited gracefully.");
                 }
@@ -413,7 +413,7 @@ impl Client {
             // If this was an expected disconnect (e.g., 515 after pairing), reconnect immediately
             if self.expected_disconnect.load(Ordering::Relaxed) {
                 self.auto_reconnect_errors.store(0, Ordering::Relaxed);
-                info!("Expected disconnect (e.g., 515), reconnecting immediately...");
+                info!("Expected disconnect detected, reconnecting immediately");
                 continue;
             }
 
@@ -421,9 +421,9 @@ impl Client {
             let delay_secs = u64::from(error_count * 2).min(30);
             let delay = Duration::from_secs(delay_secs);
             info!(
-                "Will attempt to reconnect in {:?} (attempt {})",
-                delay,
-                error_count + 1
+                delay_secs,
+                attempt = error_count + 1,
+                "Will attempt reconnect after backoff"
             );
             sleep(delay).await;
         }
@@ -457,12 +457,12 @@ impl Client {
 
         let transport_future = self.transport_factory.create_transport();
 
-        info!("Connecting WebSocket and fetching latest client version in parallel...");
+        info!("Connecting WebSocket and fetching latest client version in parallel");
         let (version_result, transport_result) = tokio::join!(version_future, transport_future);
 
         version_result.map_err(|e| anyhow!("Failed to resolve app version: {}", e))?;
         let (transport, mut transport_events) = transport_result?;
-        info!("Version fetch and transport connection established.");
+        info!("Version fetch and transport connection established");
 
         let device_snapshot = self.persistence_manager.get_device_snapshot().await;
 
@@ -484,7 +484,7 @@ impl Client {
     }
 
     pub async fn disconnect(&self) {
-        info!("Disconnecting client intentionally.");
+        info!("Disconnecting client intentionally");
         self.expected_disconnect.store(true, Ordering::Relaxed);
         self.is_running.store(false, Ordering::Relaxed);
         self.shutdown_notifier.notify_waiters();
@@ -625,7 +625,10 @@ impl Client {
     /// Process an already-decrypted node.
     /// This can be spawned concurrently since it doesn't depend on noise protocol state.
     /// The node is wrapped in Arc to avoid cloning when passing through handlers.
-    pub(crate) async fn process_decrypted_node(self: &Arc<Self>, node: warp_core_binary::node::Node) {
+    pub(crate) async fn process_decrypted_node(
+        self: &Arc<Self>,
+        node: warp_core_binary::node::Node,
+    ) {
         // Wrap in Arc once - all handlers will share this same allocation
         let node_arc = Arc::new(node);
         self.process_node(node_arc).await;
@@ -640,9 +643,9 @@ impl Client {
             && let Some(collection_node) = sync_node.get_optional_child("collection")
         {
             let name = collection_node.attrs().string("name");
-            info!(target: "Client/Recv", "Received app state sync response for '{name}' (hiding content).");
+            debug!(target: "Client/Recv", "Received app state sync response for '{name}' (hiding content).");
         } else {
-            info!(target: "Client/Recv","{}", DisplayableNode(&node));
+            debug!(target: "Client/Recv","{}", DisplayableNode(&node));
         }
 
         // Prepare deferred ACK cancellation flag (sent after dispatch unless cancelled)
@@ -723,6 +726,7 @@ impl Client {
             None => return Ok(()),
         };
         let participant = node.attrs.get("participant").cloned();
+        let sender_name = node.attrs.get("senderName").cloned();
         let typ = if node.tag != "message" {
             node.attrs.get("type").cloned()
         } else {
@@ -734,6 +738,9 @@ impl Client {
         attrs.insert("to".to_string(), from);
         if let Some(p) = participant {
             attrs.insert("participant".to_string(), p);
+        }
+        if let Some(sender_name) = sender_name {
+            attrs.insert("senderName".to_string(), sender_name);
         }
         if let Some(t) = typ {
             attrs.insert("type".to_string(), t);
@@ -832,7 +839,9 @@ impl Client {
         let iq = InfoQuery::get(
             "encrypt",
             server_jid(),
-            Some(warp_core_binary::node::NodeContent::Nodes(vec![digest_node])),
+            Some(warp_core_binary::node::NodeContent::Nodes(vec![
+                digest_node,
+            ])),
         );
 
         self.send_iq(iq).await.map(|_| ())
@@ -1715,7 +1724,8 @@ impl Client {
             None => return Err(ClientError::NotConnected),
         };
 
-        info!(target: "Client/Send", "{}", DisplayableNode(&node));
+        trace!(target: "Client/Send", "{}", DisplayableNode(&node));
+
         let mut pool_guard = self.send_buffer_pool.lock().await;
         let mut plaintext_buf = pool_guard.pop().unwrap_or_else(|| Vec::with_capacity(1024));
         let mut encrypted_buf = pool_guard.pop().unwrap_or_else(|| Vec::with_capacity(1024));
@@ -1858,5 +1868,8 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/client_tests.rs"));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/tests/client_tests.rs"
+    ));
 }

@@ -150,10 +150,6 @@ As rotas estão divididas por módulos e marcadas com seu status de implementaç
 - ❌ `DELETE /:session/groups/:id/picture`
 - ❌ `PUT /:session/groups/:id/description`
 - ❌ `PUT /:session/groups/:id/subject`
-- ❌ `PUT /:session/groups/:id/settings/security/info-admin-only`
-- ❌ `GET /:session/groups/:id/settings/security/info-admin-only`
-- ❌ `PUT /:session/groups/:id/settings/security/messages-admin-only`
-- ❌ `GET /:session/groups/:id/settings/security/messages-admin-only`
 - ✅ `GET /:session/groups/:id/invite-code`
 - ❌ `POST /:session/groups/:id/invite-code/revoke`
 - ✅ `GET /:session/groups/:id/participants`
@@ -169,6 +165,7 @@ As rotas estão divididas por módulos e marcadas com seu status de implementaç
 
 ## Events
 
+- ✅ `GET /:session/events`
 - ✅ `POST /:session/events`
 
 ## Labels

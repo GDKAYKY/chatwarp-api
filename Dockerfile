@@ -29,8 +29,10 @@ RUN mkdir -p src \
     transports/tokio-transport/src \
     waproto/src \
     warp_core/src \
+    warp_core/benches \
     warp_core/appstate/src \
     warp_core/binary/src \
+    warp_core/binary/benches \
     warp_core/libsignal/src \
     && echo "fn main() {}" > src/main.rs \
     && touch \
@@ -40,8 +42,10 @@ RUN mkdir -p src \
         transports/tokio-transport/src/lib.rs \
         waproto/src/lib.rs \
         warp_core/src/lib.rs \
+        warp_core/benches/reporting_token_benchmark.rs \
         warp_core/appstate/src/lib.rs \
         warp_core/binary/src/lib.rs \
+        warp_core/binary/benches/binary_benchmark.rs \
         warp_core/libsignal/src/lib.rs
 
 # Agora o build de deps vai funcionar de verdade

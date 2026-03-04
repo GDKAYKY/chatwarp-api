@@ -738,22 +738,123 @@ PATCHES = {
 
     # ── Events ────────────────────────────────────────────────────────────────
     "/{session}/events": {
+        "get": {
+            "summary": "Listar eventos da sessão",
+            "operationId": "getEvents",
+            "parameters": [
+                {
+                    "name": "type",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "string"},
+                    "description": "Filtra por tipo de evento (ex: CHAT_PRESENCE)"
+                },
+                {
+                    "name": "limit",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "integer", "default": 50}
+                },
+                {
+                    "name": "offset",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "integer", "default": 0}
+                }
+            ],
+            "responses": with_errors(ok_inline({
+                "events": {"type": "array", "items": {"type": "object"}}
+            }))
+        },
         "post": {
-            "summary": "Listar/filtrar eventos da sessão",
-            "operationId": "listEvents",
+            "summary": "Registrar evento na sessão",
+            "operationId": "postEvent",
             "requestBody": {
                 "required": False,
                 "content": {"application/json": {"schema": {
                     "type": "object",
                     "properties": {
-                        "types":  {"type": "array", "items": {"type": "string"}},
-                        "limit":  {"type": "integer"},
-                        "offset": {"type": "integer"}
+                        "event": {"type": "string"},
+                        "payload": {"type": "object"}
                     }
                 }}}
             },
             "responses": with_errors(ok_inline({
-                "events": {"type": "array", "items": {"type": "object"}}
+                "status": {"type": "string"}
+            }))
+        }
+    },
+
+    # ── Contacts ────────────────────────────────────────────────────────────
+    "/contacts": {
+        "get": {
+            "summary": "Listar contatos (opcional por sessão)",
+            "operationId": "listContacts",
+            "parameters": [
+                {
+                    "name": "session",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "string"}
+                }
+            ],
+            "responses": with_errors(ok_inline({
+                "contacts": {"type": "array", "items": {"type": "object"}}
+            }))
+        }
+    },
+    "/contacts/all": {
+        "get": {
+            "summary": "Listar todos os contatos",
+            "operationId": "listContactsAll",
+            "responses": with_errors(ok_inline({
+                "contacts": {"type": "array", "items": {"type": "object"}}
+            }))
+        }
+    },
+    "/contacts/profile-picture": {
+        "get": {
+            "summary": "Buscar foto de perfil de contato",
+            "operationId": "getContactProfilePicture",
+            "parameters": [
+                {
+                    "name": "session",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "string"}
+                },
+                {
+                    "name": "id",
+                    "in": "query",
+                    "required": True,
+                    "schema": {"type": "string"},
+                    "description": "JID ou número do contato"
+                }
+            ],
+            "responses": with_errors(ok_inline({
+                "url": {"type": "string"},
+                "id": {"type": "string"},
+                "status": {"type": "string"}
+            }))
+        }
+    },
+
+    # ── Groups ──────────────────────────────────────────────────────────────
+    "/{session}/groups": {
+        "get": {
+            "summary": "Listar grupos da sessão",
+            "operationId": "listGroups",
+            "responses": with_errors(ok_inline({
+                "groups": {"type": "array", "items": {"type": "object"}}
+            }))
+        }
+    },
+    "/{session}/groups/{id}": {
+        "get": {
+            "summary": "Obter grupo por ID",
+            "operationId": "getGroup",
+            "responses": with_errors(ok_inline({
+                "group": {"type": "object"}
             }))
         }
     },
@@ -837,11 +938,11 @@ def apply_patches(spec: dict) -> tuple[dict, list[str], list[str]]:
     paths = spec.get("paths", {})
     for path, methods in PATCHES.items():
         if path not in paths:
-            not_found.append(path)
-            continue
+            paths[path] = {}
         for method, operation in methods.items():
             if method not in paths[path]:
-                not_found.append(f"{method.upper()} {path}")
+                paths[path][method] = operation
+                patched.append(f"{method.upper()} {path}")
                 continue
             # Preserva tags e parâmetros existentes, substitui o resto
             existing = paths[path][method]
@@ -849,7 +950,6 @@ def apply_patches(spec: dict) -> tuple[dict, list[str], list[str]]:
             if "tags" in existing:
                 merged["tags"] = existing["tags"]
             merged.update(operation)
-            # Preserva parâmetros de nível de path (fora do método)
             paths[path][method] = merged
             patched.append(f"{method.upper()} {path}")
 

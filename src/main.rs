@@ -4,11 +4,12 @@ use chatwarp_api::pair_code::PairCodeOptions;
 use chatwarp_api::upload::UploadResponse;
 use chatwarp_api_tokio_transport::TokioWebSocketTransportFactory;
 use chatwarp_api_ureq_http_client::UreqHttpClient;
-use chrono::{Local, Utc};
-use log::{error, info};
+use chrono::Utc;
 use serde_json::json;
 use std::io::Cursor;
 use std::sync::Arc;
+use tracing::{error, info};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use waproto::whatsapp as wa;
 use warp_core::download::{Downloadable, MediaType};
 use warp_core::proto_helpers::MessageExt;
@@ -26,32 +27,36 @@ use warp_core::types::events::Event;
 use chatwarp_api::server::{AppState, InstanceState, SessionRuntime, create_router};
 use dashmap::DashMap;
 
+fn init_tracing() {
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let _ = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .compact()
+                .with_target(true)
+                .with_thread_ids(false),
+        )
+        .try_init();
+}
+
 fn main() {
+    init_tracing();
+
     // Parse CLI arguments for phone number and optional custom code
     let args: Vec<String> = std::env::args().collect();
     let phone_number = parse_arg(&args, "--phone", "-p");
     let custom_code = parse_arg(&args, "--code", "-c");
 
     if let Some(ref phone) = phone_number {
-        eprintln!("Phone number provided: {}", phone);
+        info!(phone = %phone, "Phone number provided via CLI");
         if let Some(ref code) = custom_code {
-            eprintln!("Custom pair code: {}", code);
+            info!(pair_code = %code, "Custom pair code provided via CLI");
         }
-        eprintln!("Will use pair code authentication (concurrent with QR)");
+        info!("Using pair code authentication concurrently with QR");
     }
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format(|buf, record| {
-            use std::io::Write;
-            writeln!(
-                buf,
-                "{} [{:<5}] [{}] - {}",
-                Local::now().format("%H:%M:%S"),
-                record.level(),
-                record.target(),
-                record.args()
-            )
-        })
-        .init();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -68,19 +73,19 @@ fn main() {
                     {
                         match chatwarp_api::store::PostgresStore::new(&url).await {
                             Ok(store) => {
-                                info!("PostgreSQL backend initialized successfully.");
+                                info!("PostgreSQL backend initialized");
                                 let store = Arc::new(store);
                                 (store.clone(), store as Arc<dyn ApiStore>)
                             }
                             Err(e) => {
-                                error!("Failed to create PostgreSQL backend: {}", e);
+                                error!(error = %e, "Failed to create PostgreSQL backend");
                                 return;
                             }
                         }
                     }
                     #[cfg(not(feature = "postgres-storage"))]
                     {
-                        error!("PostgreSQL support not enabled in this build.");
+                        error!("PostgreSQL support is not enabled in this build");
                         return;
                     }
                 } else {
@@ -88,18 +93,18 @@ fn main() {
                     {
                         match chatwarp_api::store::SqliteStore::new(&url).await {
                             Ok(store) => {
-                                info!("SQLite backend initialized with custom URL: {}", url);
+                                info!(database_url = %url, "SQLite backend initialized with custom URL");
                                 (Arc::new(store), Arc::new(NoopApiStore))
                             }
                             Err(e) => {
-                                error!("Failed to create SQLite backend with url {}: {}", url, e);
+                                error!(database_url = %url, error = %e, "Failed to create SQLite backend");
                                 return;
                             }
                         }
                     }
                     #[cfg(not(feature = "sqlite-storage"))]
                     {
-                        error!("SQLite support not enabled in this build.");
+                        error!("SQLite support is not enabled in this build");
                         return;
                     }
                 }
@@ -108,18 +113,18 @@ fn main() {
                 {
                     match chatwarp_api::store::SqliteStore::new("whatsapp.db").await {
                         Ok(store) => {
-                            info!("SQLite backend initialized with default whatsapp.db");
+                            info!(database_url = "whatsapp.db", "SQLite backend initialized with default database");
                             (Arc::new(store), Arc::new(NoopApiStore))
                         }
                         Err(e) => {
-                            error!("Failed to create SQLite backend: {}", e);
+                            error!(error = %e, "Failed to create SQLite backend");
                             return;
                         }
                     }
                 }
                 #[cfg(not(feature = "sqlite-storage"))]
                 {
-                    error!("No database URL provided and SQLite support not enabled.");
+                    error!("No database URL provided and SQLite support is not enabled");
                     return;
                 }
             };
@@ -173,13 +178,7 @@ fn main() {
                 async move {
                     match event {
                         Event::PairingQrCode { code, timeout } => {
-                            info!("----------------------------------------");
-                            info!(
-                                "QR code received (valid for {} seconds):",
-                                timeout.as_secs()
-                            );
-                            info!("\n{}\n", code);
-                            info!("----------------------------------------");
+                            info!(timeout_secs = timeout.as_secs(), qr_code = %code, "Pairing QR code received");
 
                             if let Some(instance) = state.instances.get(&instance_name) {
                                 *instance.qr_code.write().await = Some(code.clone());
@@ -196,15 +195,12 @@ fn main() {
                             ).await;
                         }
                         Event::PairingCode { code, timeout } => {
-                            info!("========================================");
-                            info!("PAIR CODE (valid for {} seconds):", timeout.as_secs());
-                            info!("Enter this code on your phone:");
-                            info!("WhatsApp > Linked Devices > Link a Device");
-                            info!("> Link with phone number instead");
-                            info!("");
-                            info!("    >>> {} <<<", code);
-                            info!("");
-                            info!("========================================");
+                            info!(
+                                timeout_secs = timeout.as_secs(),
+                                pair_code = %code,
+                                instructions = "WhatsApp > Linked Devices > Link a Device > Link with phone number instead",
+                                "Pair code generated"
+                            );
                         }
 
                         Event::Message(msg, info) => {
@@ -228,10 +224,11 @@ fn main() {
                                         "key": {
                                             "remoteJid": remote_jid,
                                             "fromMe": is_from_me,
-                                            "id": info.id,
+                                            "MessageId": info.id,
                                             "participant": if is_from_me { None } else { Some(sender_jid.clone()) }
                                         },
                                         "message": {
+                                            "messageType": "conversation",
                                             "conversation": text_content
                                         },
                                         // Include raw struct format for backward compatibility if needed, but above object looks more like Evolution/Baileys
@@ -247,7 +244,7 @@ fn main() {
                             if let Some(text) = ctx.message.text_content()
                                 && text == "ping"
                             {
-                                info!("Received text ping, sending pong...");
+                                info!(chat = %ctx.info.source.chat, sender = %ctx.info.source.sender, "Received text ping, sending pong");
 
                                 // Send reaction to the ping message
                                 let message_key = wa::MessageKey {
@@ -276,7 +273,7 @@ fn main() {
                                 };
 
                                 if let Err(e) = ctx.send_message(final_message_to_send).await {
-                                    error!("Failed to send reaction: {}", e);
+                                    error!(error = %e, "Failed to send reaction");
                                 }
 
                                 let start = std::time::Instant::now();
@@ -312,7 +309,7 @@ fn main() {
                                 let sent_msg_id = match ctx.send_message(reply_message).await {
                                     Ok(id) => id,
                                     Err(e) => {
-                                        error!("Failed to send initial pong message: {}", e);
+                                        error!(error = %e, "Failed to send initial pong message");
                                         return;
                                     }
                                 };
@@ -321,10 +318,7 @@ fn main() {
                                 let duration = start.elapsed();
                                 let duration_str = format!("{:.2?}", duration);
 
-                                info!(
-                                    "Send took {}. Editing message {}...",
-                                    duration_str, &sent_msg_id
-                                );
+                                info!(elapsed = %duration_str, message_id = %sent_msg_id, "Sent pong response, editing message with latency");
 
                                 // 3. Create the new content for the message
                                 let updated_content = wa::Message {
@@ -342,14 +336,14 @@ fn main() {
                                 if let Err(e) =
                                     ctx.edit_message(sent_msg_id.clone(), updated_content).await
                                 {
-                                    error!("Failed to edit message {}: {}", sent_msg_id, e);
+                                    error!(message_id = %sent_msg_id, error = %e, "Failed to edit message");
                                 } else {
-                                    info!("Successfully sent edit for message {}.", sent_msg_id);
+                                    info!(message_id = %sent_msg_id, "Successfully edited message");
                                 }
                             }
                         }
                         Event::Connected(_) => {
-                            info!("✅ Bot connected successfully!");
+                            info!("Bot connected successfully");
                             if let Some(instance) = state.instances.get(&instance_name) {
                                 *instance.qr_code.write().await = None;
                                 *instance.connection_state.write().await = "connected".to_string();
@@ -362,13 +356,57 @@ fn main() {
                             ).await;
                         }
                         Event::Receipt(receipt) => {
-                            info!(
-                                "Got receipt for message(s) {:?}, type: {:?}",
-                                receipt.message_ids, receipt.r#type
-                            );
+                            info!(message_ids = ?receipt.message_ids, receipt_type = ?receipt.r#type, "Received receipt");
+                        }
+                        Event::ChatPresence(presence) => {
+                            let chat_id = presence.source.chat.to_string();
+                            let sender = presence.source.sender.to_string();
+                            let presence_state = match presence.state {
+                                warp_core::types::presence::ChatPresence::Composing => "composing",
+                                warp_core::types::presence::ChatPresence::Paused => "paused",
+                            };
+                            let media = match presence.media {
+                                warp_core::types::presence::ChatPresenceMedia::Audio => "audio",
+                                warp_core::types::presence::ChatPresenceMedia::Text => "",
+                            };
+
+                            let payload = json!({
+                                "chatId": chat_id,
+                                "sender": sender,
+                                "state": presence_state,
+                                "media": media,
+                                "isGroup": presence.source.is_group,
+                                "timestamp": chrono::Utc::now().timestamp_millis(),
+                            });
+
+                            chatwarp_api::server::webhooks::enqueue(
+                                &state,
+                                Some(&instance_name),
+                                "CHAT_PRESENCE",
+                                payload.clone(),
+                            )
+                            .await;
+
+                            state
+                                .api_store
+                                .execute(
+                                    "INSERT INTO api_events (session, event, payload, created_at) \
+                                     VALUES ($1, $2, $3, now())",
+                                    vec![
+                                        chatwarp_api::api_store::ApiBind::Text(
+                                            instance_name.clone(),
+                                        ),
+                                        chatwarp_api::api_store::ApiBind::Text(
+                                            "CHAT_PRESENCE".to_string(),
+                                        ),
+                                        chatwarp_api::api_store::ApiBind::Json(payload),
+                                    ],
+                                )
+                                .await
+                                .ok();
                         }
                         Event::LoggedOut(_) => {
-                            error!("❌ Bot was logged out!");
+                            error!("Bot was logged out");
                             if let Some(instance) = state.instances.get(&instance_name) {
                                 *instance.connection_state.write().await =
                                     "disconnected".to_string();
@@ -400,7 +438,7 @@ fn main() {
         let bot_handle = match bot.run().await {
             Ok(handle) => handle,
             Err(e) => {
-                error!("Bot failed to start: {}", e);
+                error!(error = %e, "Bot failed to start");
                 return;
             }
         };
@@ -413,7 +451,7 @@ fn main() {
             .unwrap_or(8080);
         let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
 
-        info!("HTTP server listening on {}", addr);
+        info!(address = %addr, "HTTP server listening");
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 
         let server_handle = tokio::spawn(async move {
@@ -505,15 +543,11 @@ fn get_pingable_media<'a>(message: &'a wa::Message) -> Option<&'a (dyn MediaPing
 }
 
 async fn handle_media_ping(ctx: &MessageContext, media: &(dyn MediaPing + '_)) {
-    info!(
-        "Received {:?} ping from {}",
-        media.media_type(),
-        ctx.info.source.sender
-    );
+    info!(media_type = ?media.media_type(), sender = %ctx.info.source.sender, "Received media ping");
 
     let mut data_buffer = Cursor::new(Vec::new());
     if let Err(e) = ctx.client.download_to_file(media, &mut data_buffer).await {
-        error!("Failed to download media: {}", e);
+        error!(error = %e, "Failed to download media");
         let _ = ctx
             .send_message(wa::Message {
                 conversation: Some("Failed to download your media.".to_string()),
@@ -524,14 +558,14 @@ async fn handle_media_ping(ctx: &MessageContext, media: &(dyn MediaPing + '_)) {
     }
 
     info!(
-        "Successfully downloaded media. Size: {} bytes. Now uploading...",
-        data_buffer.get_ref().len()
+        bytes = data_buffer.get_ref().len(),
+        "Media downloaded successfully, uploading"
     );
     let plaintext_data = data_buffer.into_inner();
     let upload_response = match ctx.client.upload(plaintext_data, media.media_type()).await {
         Ok(resp) => resp,
         Err(e) => {
-            error!("Failed to upload media: {}", e);
+            error!(error = %e, "Failed to upload media");
             let _ = ctx
                 .send_message(wa::Message {
                     conversation: Some("Failed to re-upload the media.".to_string()),
@@ -542,11 +576,11 @@ async fn handle_media_ping(ctx: &MessageContext, media: &(dyn MediaPing + '_)) {
         }
     };
 
-    info!("Successfully uploaded media. Constructing reply message...");
+    info!("Media uploaded successfully, constructing reply message");
     let reply_msg = media.build_pong_reply(upload_response);
 
     if let Err(e) = ctx.send_message(reply_msg).await {
-        error!("Failed to send media pong reply: {}", e);
+        error!(error = %e, "Failed to send media pong reply");
     } else {
         info!("Media pong reply sent successfully.");
     }

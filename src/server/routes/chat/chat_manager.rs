@@ -175,7 +175,7 @@ async fn send_message_type(
             webhooks::enqueue(
                 &state,
                 Some(&session),
-                "MESSAGES_UPSERT",
+                "MESSAGES_QUEUE",
                 json!({"message": message.clone()}),
             )
             .await;

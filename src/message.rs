@@ -7,6 +7,7 @@ use log::{debug, warn};
 use prost::Message as ProtoMessage;
 use rand::TryRngCore;
 use std::sync::Arc;
+use waproto::whatsapp::{self as wa};
 use warp_core::libsignal::crypto::DecryptionError;
 use warp_core::libsignal::protocol::SenderKeyDistributionMessage;
 use warp_core::libsignal::protocol::group_decrypt;
@@ -23,7 +24,6 @@ use warp_core::types::jid::JidExt;
 use warp_core_binary::jid::Jid;
 use warp_core_binary::jid::JidExt as _;
 use warp_core_binary::node::Node;
-use waproto::whatsapp::{self as wa};
 
 /// Maximum retry attempts per message (matches WhatsApp Web's MAX_RETRY = 5).
 /// After this many retries, we stop sending retry receipts and rely solely on PDO.
@@ -672,7 +672,7 @@ impl Client {
 
                         match retry_decrypt_res {
                             Ok(padded_plaintext) => {
-                                log::info!(
+                                log::warn!(
                                     "[msg:{}] Successfully decrypted message from {} after handling untrusted identity",
                                     info.id,
                                     address
@@ -938,7 +938,7 @@ impl Client {
         });
 
         let plaintext_slice = MessageUtils::unpad_message_ref(padded_plaintext, padding_version)?;
-        log::info!(
+        log::trace!(
             "Successfully decrypted message from {}: {} bytes (type: {}) [batch path]",
             info.source.sender,
             plaintext_slice.len(),
@@ -1308,5 +1308,8 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/message_tests.rs"));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/tests/message_tests.rs"
+    ));
 }

@@ -9,7 +9,6 @@ use warp_core_binary::node::Node;
 /// This handler provides a placeholder for stanza types like:
 /// - `<call>` - Voice/video call signaling
 /// - `<presence>` - User presence updates
-/// - `<chatstate>` - Typing indicators
 ///
 /// These will be logged and handled minimally until full implementations are added.
 pub struct UnimplementedHandler {
@@ -29,9 +28,6 @@ impl UnimplementedHandler {
         Self::new(vec!["presence"])
     }
 
-    pub fn for_chatstate() -> Self {
-        Self::new(vec!["chatstate"])
-    }
 }
 
 #[async_trait]

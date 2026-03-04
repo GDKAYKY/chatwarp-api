@@ -193,7 +193,7 @@ pub fn router() -> Router<Arc<AppState>> {
         // Calls
         .route("/:session/calls/reject", post(calls::reject_call))
         // Events
-        .route("/:session/events", post(events::post_event))
+        .route("/:session/events", get(events::get_events).post(events::post_event))
         // Labels
         .route("/:session/labels", get(labels::list_labels).post(labels::create_label))
         .route("/:session/labels/:labelId", put(not_implemented).delete(not_implemented))

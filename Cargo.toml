@@ -65,6 +65,9 @@ indexmap = { version = "2.12.1", features = ["serde"] }
 log = "0.4.27"
 moka = { version = "0.12.12", features = ["future"] }
 prost = { version = "0.14.1", default-features = false }
+tracing = "0.1.41"
+tracing-log = "0.2.0"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 
 # Cryptography
 rand = { workspace = true }
