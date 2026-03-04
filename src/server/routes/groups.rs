@@ -56,20 +56,37 @@ pub async fn list_groups(
     State(state): State<Arc<AppState>>,
     Path(session): Path<String>,
 ) -> impl IntoResponse {
-    let rows = state
-        .api_store
-        .query_json(
-            "SELECT row_to_json(api_groups)::jsonb as value FROM api_groups WHERE session = $1",
-            vec![ApiBind::Text(session)],
-        )
-        .await;
+    let Some(client_ref) = state.clients.get(&session) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "session_not_found", "session": session})),
+        );
+    };
 
-    match rows {
-        Ok(rows) => (StatusCode::OK, Json(json!(rows))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "db_error", "details": err.to_string()})),
-        ),
+    let client = client_ref.value().clone();
+    drop(client_ref);
+
+    match client.groups().get_participating().await {
+        Ok(groups_map) => {
+            let list: Vec<Value> = groups_map
+                .values()
+                .map(|g| {
+                    json!({
+                        "jid": g.id.to_string(),
+                        "groupName": g.subject,
+                    })
+                })
+                .collect();
+
+            (StatusCode::OK, Json(json!(list)))
+        }
+        Err(err) => {
+            log::error!("Failed to fetch groups for session {}: {}", session, err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "fetch_failed", "details": err.to_string()})),
+            )
+        }
     }
 }
 

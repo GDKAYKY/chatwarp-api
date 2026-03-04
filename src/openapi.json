@@ -4396,16 +4396,19 @@
         "operationId": "listGroups",
         "responses": {
           "200": {
-            "description": "Success",
+            "description": "Lista de grupos",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "groups": {
-                      "type": "array",
-                      "items": {
-                        "type": "object"
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "groupName": {
+                        "type": "string"
+                      },
+                      "jid": {
+                        "type": "string"
                       }
                     }
                   }

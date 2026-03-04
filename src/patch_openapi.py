@@ -844,9 +844,21 @@ PATCHES = {
         "get": {
             "summary": "Listar grupos da sessão",
             "operationId": "listGroups",
-            "responses": with_errors(ok_inline({
-                "groups": {"type": "array", "items": {"type": "object"}}
-            }))
+            "responses": with_errors({
+                "200": {
+                    "description": "Lista de grupos",
+                    "content": {"application/json": {"schema": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "groupName": {"type": "string"},
+                                "jid": {"type": "string"}
+                            }
+                        }
+                    }}}
+                }
+            })
         }
     },
     "/{session}/groups/{id}": {

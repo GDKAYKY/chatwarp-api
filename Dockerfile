@@ -18,8 +18,6 @@ COPY warp_core/Cargo.toml ./warp_core/Cargo.toml
 COPY warp_core/appstate/Cargo.toml ./warp_core/appstate/Cargo.toml
 COPY warp_core/binary/Cargo.toml ./warp_core/binary/Cargo.toml
 COPY warp_core/libsignal/Cargo.toml ./warp_core/libsignal/Cargo.toml
-
-# waproto precisa do whatsapp.rs pré-gerado para compilar
 COPY waproto/src/whatsapp.rs ./waproto/src/whatsapp.rs
 
 RUN mkdir -p src \
@@ -48,18 +46,29 @@ RUN mkdir -p src \
         warp_core/binary/benches/binary_benchmark.rs \
         warp_core/libsignal/src/lib.rs
 
-# Agora o build de deps vai funcionar de verdade
+# Compila todas as deps externas com stubs
 RUN cargo build --release --bin chatwarp-api --all-features
 
-# Copia o código real e recompila só o seu código
+# Ordem: das crates base para as que dependem delas
+# waproto e warp_core são base — vão primeiro
+COPY waproto/ ./waproto/
+RUN find waproto/src -name "*.rs" | xargs touch \
+    && cargo build --release --bin chatwarp-api --all-features
+
+COPY warp_core/ ./warp_core/
+RUN find warp_core -name "*.rs" -not -path "*/target/*" | xargs touch \
+    && cargo build --release --bin chatwarp-api --all-features
+
+# Agora as que dependem de warp_core
 COPY http_clients/ ./http_clients/
 COPY storages/ ./storages/
 COPY transports/ ./transports/
-COPY waproto/ ./waproto/
-COPY warp_core/ ./warp_core/
-COPY src/ ./src/
+RUN find http_clients storages transports -name "*.rs" | xargs touch \
+    && cargo build --release --bin chatwarp-api --all-features
 
-RUN find . -name "*.rs" -not -path "*/target/*" | xargs touch \
+# src/ muda com mais frequência — sempre por último
+COPY src/ ./src/
+RUN find src -name "*.rs" | xargs touch \
     && cargo build --release --bin chatwarp-api --all-features
 
 # Runtime stage
