@@ -68,39 +68,70 @@ async fn list_messages(
     Ok(state.api_store.query_json(sql, binds).await?)
 }
 
-pub async fn send_text(
+pub async fn send_message(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
-) -> impl IntoResponse {
-    send_message_type(state, body, "text", true).await
-}
+) -> axum::response::Response {
+    let has_media = body.get("base64").is_some() || body.get("url").is_some();
+    let text_value = body
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    let has_text = text_value.is_some();
 
-pub async fn send_image(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    send_message_type(state, body, "image", true).await
-}
+    if has_media {
+        let media_type = body
+            .get("mediaType")
+            .or_else(|| body.get("media_type"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase())
+            .unwrap_or_else(|| "image".to_string());
 
-pub async fn send_file(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    send_message_type(state, body, "file", true).await
-}
+        let (message_type, caption_allowed) = match media_type.as_str() {
+            "image" => ("image", true),
+            "video" => ("video", true),
+            "voice" | "audio" => ("voice", false),
+            "file" | "document" => ("file", true),
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": "invalid_media_type"})),
+                )
+                    .into_response();
+            }
+        };
 
-pub async fn send_voice(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    send_message_type(state, body, "voice", true).await
-}
-
-pub async fn send_video(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    send_message_type(state, body, "video", true).await
+        let has_caption = body
+            .get("caption")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if caption_allowed && !has_caption {
+            if let Some(text) = text_value {
+                if let Some(obj) = body.as_object() {
+                    let mut updated = obj.clone();
+                    updated.insert("caption".to_string(), json!(text));
+                    return send_message_type(state, Value::Object(updated), message_type, true)
+                        .await
+                        .into_response();
+                }
+            }
+        }
+        send_message_type(state, body, message_type, true)
+            .await
+            .into_response()
+    } else if has_text {
+        send_message_type(state, body, "text", true)
+            .await
+            .into_response()
+    } else {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "text_or_media_required"})),
+        )
+            .into_response()
+    }
 }
 
 pub async fn send_buttons(

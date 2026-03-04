@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use chatwarp_api::api_store::{ApiStore, NoopApiStore};
 use chatwarp_api::bot::{Bot, MessageContext};
 use chatwarp_api::pair_code::PairCodeOptions;
@@ -215,6 +216,60 @@ fn main() {
                             let is_from_me = info.source.is_from_me;
                             let text_content = msg.text_content().unwrap_or_default();
 
+                            let base64_enabled = match chatwarp_api::server::webhooks::load_instance_webhook(
+                                &state,
+                                &instance_name,
+                            )
+                            .await
+                            {
+                                Ok(Some(cfg)) if cfg.enabled && cfg.base64 => true,
+                                _ => false,
+                            };
+
+                            let message_payload = if let Some(image) = msg.image_message.as_deref() {
+                                let mut message = serde_json::Map::new();
+                                message.insert("messageType".to_string(), json!("image"));
+                                message.insert("type".to_string(), json!("image"));
+
+                                if let Some(url) = &image.url {
+                                    message.insert("url".to_string(), json!(url));
+                                }
+                                if let Some(mimetype) = &image.mimetype {
+                                    message.insert("mimetype".to_string(), json!(mimetype));
+                                }
+                                if let Some(caption) = &image.caption {
+                                    message.insert("caption".to_string(), json!(caption));
+                                }
+                                if let Some(file_length) = image.file_length {
+                                    message.insert("fileLength".to_string(), json!(file_length));
+                                }
+
+                                if base64_enabled {
+                                    match ctx.client.download(image).await {
+                                        Ok(bytes) => {
+                                            let mime = image
+                                                .mimetype
+                                                .as_deref()
+                                                .unwrap_or("application/octet-stream");
+                                            let encoded = base64::engine::general_purpose::STANDARD
+                                                .encode(bytes);
+                                            let data_url = format!("data:{};base64,{}", mime, encoded);
+                                            message.insert("base64".to_string(), json!(data_url));
+                                        }
+                                        Err(e) => {
+                                            error!(error = %e, "Failed to download image for webhook base64");
+                                        }
+                                    }
+                                }
+
+                                serde_json::Value::Object(message)
+                            } else {
+                                json!({
+                                    "messageType": "conversation",
+                                    "conversation": text_content
+                                })
+                            };
+
                             chatwarp_api::server::webhooks::enqueue(
                                 &state,
                                 Some(&instance_name),
@@ -227,10 +282,7 @@ fn main() {
                                             "MessageId": info.id,
                                             "participant": if is_from_me { None } else { Some(sender_jid.clone()) }
                                         },
-                                        "message": {
-                                            "messageType": "conversation",
-                                            "conversation": text_content
-                                        },
+                                        "message": message_payload,
                                         // Include raw struct format for backward compatibility if needed, but above object looks more like Evolution/Baileys
                                     }],
                                     "type": "notify"

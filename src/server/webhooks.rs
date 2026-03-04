@@ -140,6 +140,15 @@ fn enrich_payload(payload: &Value, destination: &str, base64_enabled: bool) -> V
             if let Some(Value::Object(message)) = data.get_mut("message") {
                 message.remove("base64");
             }
+            if let Some(Value::Array(messages)) = data.get_mut("messages") {
+                for entry in messages.iter_mut() {
+                    if let Value::Object(entry_obj) = entry {
+                        if let Some(Value::Object(message)) = entry_obj.get_mut("message") {
+                            message.remove("base64");
+                        }
+                    }
+                }
+            }
         }
     }
     obj.insert("destination".to_string(), json!(destination));
@@ -214,7 +223,7 @@ fn event_allowed(events: &Option<Vec<String>>, event: &str) -> bool {
     }
 }
 
-async fn load_instance_webhook(
+pub async fn load_instance_webhook(
     state: &AppState,
     session: &str,
 ) -> anyhow::Result<Option<WebhookConfig>> {

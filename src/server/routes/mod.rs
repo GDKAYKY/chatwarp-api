@@ -60,11 +60,7 @@ pub fn router() -> Router<Arc<AppState>> {
             put(profile::update_picture).delete(not_implemented),
         )
         // Chatting
-        .route("/sendText", post(chat::chat_manager::send_text).get(not_implemented))
-        .route("/sendImage", post(chat::chat_manager::send_image))
-        .route("/sendFile", post(chat::chat_manager::send_file))
-        .route("/sendVoice", post(chat::chat_manager::send_voice))
-        .route("/sendVideo", post(chat::chat_manager::send_video))
+        .route("/sendMessage", post(chat::chat_manager::send_message))
         .route("/send/link-custom-preview", post(chat::chat_manager::send_link_custom_preview))
         .route("/sendButtons", post(chat::chat_manager::send_buttons))
         .route("/sendList", post(chat::chat_manager::send_list))

@@ -35,12 +35,7 @@ As rotas estão divididas por módulos e marcadas com seu status de implementaç
 
 ## Chat Manager
 
-- ✅ `POST /sendText`
-- ❌ `GET /sendText`
-- ✅ `POST /sendImage`
-- ✅ `POST /sendFile`
-- ✅ `POST /sendVoice`
-- ✅ `POST /sendVideo`
+- ✅ `POST /sendMessage`
 - ✅ `POST /send/link-custom-preview`
 - ✅ `POST /sendButtons`
 - ✅ `POST /sendList`
