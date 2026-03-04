@@ -2,30 +2,26 @@
 FROM rustlang/rust:nightly-bookworm AS builder
 
 RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    libpq-dev \
-    cmake \
-    protobuf-compiler \
+    pkg-config libssl-dev libpq-dev cmake protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copia manifestos do workspace
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 
-# Copia Cargo.toml de cada membro do workspace (paths exatos do Cargo.toml)
 COPY http_clients/ureq-client/Cargo.toml ./http_clients/ureq-client/Cargo.toml
 COPY storages/sqlite-storage/Cargo.toml ./storages/sqlite-storage/Cargo.toml
 COPY storages/postgres-storage/Cargo.toml ./storages/postgres-storage/Cargo.toml
 COPY transports/tokio-transport/Cargo.toml ./transports/tokio-transport/Cargo.toml
-COPY waproto/Cargo.toml ./waproto/Cargo.toml
+COPY waproto/Cargo.toml waproto/build.rs ./waproto/
 COPY warp_core/Cargo.toml ./warp_core/Cargo.toml
 COPY warp_core/appstate/Cargo.toml ./warp_core/appstate/Cargo.toml
 COPY warp_core/binary/Cargo.toml ./warp_core/binary/Cargo.toml
 COPY warp_core/libsignal/Cargo.toml ./warp_core/libsignal/Cargo.toml
 
-# Cria src/lib.rs falsos para cachear dependências
+# waproto precisa do whatsapp.rs pré-gerado para compilar
+COPY waproto/src/whatsapp.rs ./waproto/src/whatsapp.rs
+
 RUN mkdir -p src \
     http_clients/ureq-client/src \
     storages/sqlite-storage/src \
@@ -48,10 +44,10 @@ RUN mkdir -p src \
         warp_core/binary/src/lib.rs \
         warp_core/libsignal/src/lib.rs
 
-# Compila só as dependências (fica cacheado!)
-RUN cargo build --release --bin chatwarp-api --all-features || true
+# Agora o build de deps vai funcionar de verdade
+RUN cargo build --release --bin chatwarp-api --all-features
 
-# Agora copia o código real
+# Copia o código real e recompila só o seu código
 COPY http_clients/ ./http_clients/
 COPY storages/ ./storages/
 COPY transports/ ./transports/
@@ -59,10 +55,8 @@ COPY waproto/ ./waproto/
 COPY warp_core/ ./warp_core/
 COPY src/ ./src/
 
-# Força recompilação do seu código
-RUN find . -name "*.rs" -not -path "*/target/*" | xargs touch
-
-RUN cargo build --release --bin chatwarp-api --all-features
+RUN find . -name "*.rs" -not -path "*/target/*" | xargs touch \
+    && cargo build --release --bin chatwarp-api --all-features
 
 # Runtime stage
 FROM debian:bookworm-slim

@@ -1,11 +1,11 @@
 use crate::client::Client;
 use crate::store::signal_adapter::SignalProtocolStoreAdapter;
 use anyhow::anyhow;
+use waproto::whatsapp as wa;
 use warp_core::client::context::SendContextResolver;
 use warp_core::libsignal::protocol::SignalProtocolError;
 use warp_core::types::jid::JidExt;
 use warp_core_binary::jid::{Jid, JidExt as _};
-use waproto::whatsapp as wa;
 
 impl Client {
     pub async fn send_message(
@@ -67,7 +67,10 @@ impl Client {
             // inside prepare_group_stanza, so we don't need to serialize entire group sends.
 
             // Preparation work (no lock needed)
+            let _t_group_start = std::time::Instant::now();
+            let _t_query = std::time::Instant::now();
             let mut group_info = self.groups().query_info(&to).await?;
+            log::debug!("Time measuring: query_info took {:?}", _t_query.elapsed());
 
             let device_snapshot = self.persistence_manager.get_device_snapshot().await;
             let own_jid = device_snapshot
@@ -154,8 +157,14 @@ impl Client {
                         .iter()
                         .map(|jid| jid.to_non_ad())
                         .collect();
-
-                    match SendContextResolver::resolve_devices(self, &jids_to_resolve).await {
+                    let _t_resolve = std::time::Instant::now();
+                    let resolve_result =
+                        SendContextResolver::resolve_devices(self, &jids_to_resolve).await;
+                    log::debug!(
+                        "Time measuring: resolve_devices took {:?}",
+                        _t_resolve.elapsed()
+                    );
+                    match resolve_result {
                         Ok(all_devices) => {
                             // Filter to find devices that don't have SKDM yet
                             let new_devices: Vec<Jid> = all_devices
@@ -216,7 +225,8 @@ impl Client {
                 .unwrap_or_default();
 
             // Encryption happens here (per-device locking handled internally)
-            match warp_core::send::prepare_group_stanza(
+            let _t_prep = std::time::Instant::now();
+            let group_stanza_result = warp_core::send::prepare_group_stanza(
                 &mut stores,
                 self,
                 &mut group_info,
@@ -230,8 +240,13 @@ impl Client {
                 skdm_target_devices.clone(),
                 edit.clone(),
             )
-            .await
-            {
+            .await;
+            log::debug!(
+                "Time measuring: prepare_group_stanza took {:?}",
+                _t_prep.elapsed()
+            );
+
+            match group_stanza_result {
                 Ok(stanza) => {
                     // Update SKDM recipients tracking after preparing the stanza
                     if !devices_receiving_skdm.is_empty() {
@@ -249,10 +264,14 @@ impl Client {
                             .iter()
                             .map(|jid| jid.to_non_ad())
                             .collect();
-
-                        if let Ok(all_devices) =
-                            SendContextResolver::resolve_devices(self, &jids_to_resolve).await
-                        {
+                        let _t_resolve_full = std::time::Instant::now();
+                        let resolve_result =
+                            SendContextResolver::resolve_devices(self, &jids_to_resolve).await;
+                        log::debug!(
+                            "Time measuring: resolve_devices (full) took {:?}",
+                            _t_resolve_full.elapsed()
+                        );
+                        if let Ok(all_devices) = resolve_result {
                             let all_device_strs: Vec<String> =
                                 all_devices.iter().map(|d| d.to_string()).collect();
                             if let Err(e) = self
@@ -264,6 +283,10 @@ impl Client {
                             }
                         }
                     }
+                    log::debug!(
+                        "Time measuring: Total group prepare process took {:?}",
+                        _t_group_start.elapsed()
+                    );
                     stanza
                 }
                 Err(e) => {
@@ -291,7 +314,8 @@ impl Client {
                             sender_key_store: &mut store_adapter_retry.sender_key_store,
                         };
 
-                        warp_core::send::prepare_group_stanza(
+                        let _t_prep_retry = std::time::Instant::now();
+                        let retry_res = warp_core::send::prepare_group_stanza(
                             &mut stores_retry,
                             self,
                             &mut group_info,
@@ -305,7 +329,16 @@ impl Client {
                             None, // Distribute to all devices
                             edit.clone(),
                         )
-                        .await?
+                        .await?;
+                        log::debug!(
+                            "Time measuring: prepare_group_stanza (retry) took {:?}",
+                            _t_prep_retry.elapsed()
+                        );
+                        log::debug!(
+                            "Time measuring: Total group prepare process took {:?}",
+                            _t_group_start.elapsed()
+                        );
+                        retry_res
                     } else {
                         return Err(e);
                     }
@@ -313,11 +346,23 @@ impl Client {
             }
         } else {
             // Direct message: Acquire lock only during encryption
+            let _t_dm_start = std::time::Instant::now();
 
             // Ensure E2E sessions exist before encryption (matches WhatsApp Web)
             // This deduplicates concurrent prekey fetches for the same recipient
+            let _t_get_devices = std::time::Instant::now();
             let recipient_devices = self.get_user_devices(std::slice::from_ref(&to)).await?;
+            log::debug!(
+                "Time measuring: get_user_devices took {:?}",
+                _t_get_devices.elapsed()
+            );
+
+            let _t_ensure_sessions = std::time::Instant::now();
             self.ensure_e2e_sessions(recipient_devices).await?;
+            log::debug!(
+                "Time measuring: ensure_e2e_sessions took {:?}",
+                _t_ensure_sessions.elapsed()
+            );
 
             // Resolve encryption JID and prepare lock acquisition
             let encryption_jid = self.resolve_encryption_jid(&to).await;
@@ -355,7 +400,8 @@ impl Client {
                 sender_key_store: &mut store_adapter.sender_key_store,
             };
 
-            warp_core::send::prepare_dm_stanza(
+            let _t_prep_dm = std::time::Instant::now();
+            let prep_dm_res = warp_core::send::prepare_dm_stanza(
                 &mut stores,
                 self,
                 &own_jid,
@@ -365,10 +411,25 @@ impl Client {
                 request_id,
                 edit,
             )
-            .await?
+            .await?;
+            log::debug!(
+                "Time measuring: prepare_dm_stanza took {:?}",
+                _t_prep_dm.elapsed()
+            );
+            log::debug!(
+                "Time measuring: Total DM prepare process took {:?}",
+                _t_dm_start.elapsed()
+            );
+            prep_dm_res
             // Lock released here automatically
         };
         // Network send happens with NO lock held
-        self.send_node(stanza_to_send).await.map_err(|e| e.into())
+        let _t_network_send = std::time::Instant::now();
+        let result = self.send_node(stanza_to_send).await.map_err(|e| e.into());
+        log::debug!(
+            "Time measuring: send_node took {:?}",
+            _t_network_send.elapsed()
+        );
+        result
     }
 }
