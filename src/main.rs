@@ -229,7 +229,6 @@ fn main() {
                             let message_payload = if let Some(image) = msg.image_message.as_deref() {
                                 let mut message = serde_json::Map::new();
                                 message.insert("messageType".to_string(), json!("image"));
-                                message.insert("type".to_string(), json!("image"));
 
                                 if let Some(url) = &image.url {
                                     message.insert("url".to_string(), json!(url));
@@ -238,7 +237,7 @@ fn main() {
                                     message.insert("mimetype".to_string(), json!(mimetype));
                                 }
                                 if let Some(caption) = &image.caption {
-                                    message.insert("caption".to_string(), json!(caption));
+                                    message.insert("text".to_string(), json!(caption));
                                 }
                                 if let Some(file_length) = image.file_length {
                                     message.insert("fileLength".to_string(), json!(file_length));
@@ -266,7 +265,7 @@ fn main() {
                             } else {
                                 json!({
                                     "messageType": "conversation",
-                                    "conversation": text_content
+                                    "text": text_content
                                 })
                             };
 

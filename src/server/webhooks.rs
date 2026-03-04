@@ -4,20 +4,18 @@ use crate::server::AppState;
 use chatwarp_api_ureq_http_client::UreqHttpClient;
 use chrono::Utc;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use uuid::Uuid;
 use warp_core::net::{HttpClient, HttpRequest};
-use std::collections::HashMap;
 
 pub async fn enqueue(state: &AppState, session: Option<&str>, event: &str, data: Value) {
     let payload = json!({
         "event": event,
         "instance": session.unwrap_or(""),
-        "data": data,
-        "sender": null,
-        "apikey": null
+        "data": data
     });
 
     let _ = state
