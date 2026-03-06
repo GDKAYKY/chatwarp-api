@@ -32,3 +32,4 @@ target
 /session.db
 /session.db-shm
 /session.db-wal
+/n8n/.env

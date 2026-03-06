@@ -13,13 +13,9 @@ services:
     env_file:
       - .env
     environment:
-      # Provide DATABASE_URL for Postgres (e.g. Supabase)
-      # DATABASE_URL: postgres://postgres.your-project:password@aws-0-pooler.supabase.com:5432/postgres
-      # Default fallback to SQLite if DATABASE_URL is not set or not starting with postgres://
-
       PORT: 8080
       RUST_LOG: info
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL}
     ports:
       - "8080:8080"
     volumes:
@@ -30,49 +26,7 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - chatwarp-net
 
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: n8n
-    restart: unless-stopped
-    ports:
-      - "5678:5678"
-    environment:
-      - N8N_HOST=localhost
-      - N8N_PORT=5678
-      - WEBHOOK_URL=http://localhost:5678/
-    volumes:
-      - n8n-data:/home/node/.n8n
-    networks:
-      - chatwarp-net
-
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    networks:
-      - chatwarp-net
 
 volumes:
   chatwarp-data:
-  n8n-data:
-  redis-data:
-
-networks:
-  chatwarp-net:
-    name: chatwarp-net
