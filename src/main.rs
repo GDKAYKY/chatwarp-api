@@ -271,6 +271,153 @@ fn main() {
                                 }
 
                                 serde_json::Value::Object(message)
+                            } else if let Some(video) = msg.video_message.as_deref() {
+                                let mut message = serde_json::Map::new();
+                                message.insert("messageType".to_string(), json!("video"));
+
+                                if let Some(url) = &video.url {
+                                    message.insert("url".to_string(), json!(url));
+                                }
+                                if let Some(mimetype) = &video.mimetype {
+                                    message.insert("mimetype".to_string(), json!(mimetype));
+                                }
+                                if let Some(caption) = &video.caption {
+                                    message.insert("text".to_string(), json!(caption));
+                                }
+                                if let Some(file_length) = video.file_length {
+                                    message.insert("fileLength".to_string(), json!(file_length));
+                                }
+
+                                if base64_enabled {
+                                    match ctx.client.download(video).await {
+                                        Ok(bytes) => {
+                                            let mime = video
+                                                .mimetype
+                                                .as_deref()
+                                                .unwrap_or("application/octet-stream");
+                                            let encoded = base64::engine::general_purpose::STANDARD
+                                                .encode(bytes);
+                                            let data_url = format!("data:{};base64,{}", mime, encoded);
+                                            message.insert("base64".to_string(), json!(data_url));
+                                        }
+                                        Err(e) => {
+                                            error!(error = %e, "Failed to download video for webhook base64");
+                                        }
+                                    }
+                                }
+
+                                serde_json::Value::Object(message)
+                            } else if let Some(audio) = msg.audio_message.as_deref() {
+                                let mut message = serde_json::Map::new();
+                                message.insert("messageType".to_string(), json!("voice"));
+
+                                if let Some(url) = &audio.url {
+                                    message.insert("url".to_string(), json!(url));
+                                }
+                                if let Some(mimetype) = &audio.mimetype {
+                                    message.insert("mimetype".to_string(), json!(mimetype));
+                                }
+                                if let Some(file_length) = audio.file_length {
+                                    message.insert("fileLength".to_string(), json!(file_length));
+                                }
+                                if let Some(ptt) = audio.ptt {
+                                    message.insert("ptt".to_string(), json!(ptt));
+                                }
+
+                                if base64_enabled {
+                                    match ctx.client.download(audio).await {
+                                        Ok(bytes) => {
+                                            let mime = audio
+                                                .mimetype
+                                                .as_deref()
+                                                .unwrap_or("application/octet-stream");
+                                            let encoded = base64::engine::general_purpose::STANDARD
+                                                .encode(bytes);
+                                            let data_url = format!("data:{};base64,{}", mime, encoded);
+                                            message.insert("base64".to_string(), json!(data_url));
+                                        }
+                                        Err(e) => {
+                                            error!(error = %e, "Failed to download audio for webhook base64");
+                                        }
+                                    }
+                                }
+
+                                serde_json::Value::Object(message)
+                            } else if let Some(doc) = msg.document_message.as_deref() {
+                                let mut message = serde_json::Map::new();
+                                message.insert("messageType".to_string(), json!("file"));
+
+                                if let Some(url) = &doc.url {
+                                    message.insert("url".to_string(), json!(url));
+                                }
+                                if let Some(mimetype) = &doc.mimetype {
+                                    message.insert("mimetype".to_string(), json!(mimetype));
+                                }
+                                if let Some(caption) = &doc.caption {
+                                    message.insert("text".to_string(), json!(caption));
+                                }
+                                if let Some(file_name) = &doc.file_name {
+                                    message.insert("filename".to_string(), json!(file_name));
+                                }
+                                if let Some(file_length) = doc.file_length {
+                                    message.insert("fileLength".to_string(), json!(file_length));
+                                }
+
+                                if base64_enabled {
+                                    match ctx.client.download(doc).await {
+                                        Ok(bytes) => {
+                                            let mime = doc
+                                                .mimetype
+                                                .as_deref()
+                                                .unwrap_or("application/octet-stream");
+                                            let encoded = base64::engine::general_purpose::STANDARD
+                                                .encode(bytes);
+                                            let data_url = format!("data:{};base64,{}", mime, encoded);
+                                            message.insert("base64".to_string(), json!(data_url));
+                                        }
+                                        Err(e) => {
+                                            error!(error = %e, "Failed to download document for webhook base64");
+                                        }
+                                    }
+                                }
+
+                                serde_json::Value::Object(message)
+                            } else if let Some(sticker) = msg.sticker_message.as_deref() {
+                                let mut message = serde_json::Map::new();
+                                message.insert("messageType".to_string(), json!("sticker"));
+
+                                if let Some(url) = &sticker.url {
+                                    message.insert("url".to_string(), json!(url));
+                                }
+                                if let Some(mimetype) = &sticker.mimetype {
+                                    message.insert("mimetype".to_string(), json!(mimetype));
+                                }
+                                if let Some(file_length) = sticker.file_length {
+                                    message.insert("fileLength".to_string(), json!(file_length));
+                                }
+                                if let Some(is_animated) = sticker.is_animated {
+                                    message.insert("isAnimated".to_string(), json!(is_animated));
+                                }
+
+                                if base64_enabled {
+                                    match ctx.client.download(sticker).await {
+                                        Ok(bytes) => {
+                                            let mime = sticker
+                                                .mimetype
+                                                .as_deref()
+                                                .unwrap_or("application/octet-stream");
+                                            let encoded = base64::engine::general_purpose::STANDARD
+                                                .encode(bytes);
+                                            let data_url = format!("data:{};base64,{}", mime, encoded);
+                                            message.insert("base64".to_string(), json!(data_url));
+                                        }
+                                        Err(e) => {
+                                            error!(error = %e, "Failed to download sticker for webhook base64");
+                                        }
+                                    }
+                                }
+
+                                serde_json::Value::Object(message)
                             } else {
                                 json!({
                                     "messageType": "conversation",

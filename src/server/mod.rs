@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use image::Luma;
 use qrcode::QrCode;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tokio::sync::RwLock;
 
 pub mod handlers;
@@ -30,11 +30,16 @@ pub struct AppState {
 #[derive(Clone, Debug, Default)]
 pub struct Settings {
     pub webhook_events: std::collections::HashMap<String, bool>,
+    pub allowed_events: Option<HashSet<String>>,
 }
 
 impl Settings {
     pub fn new() -> Self {
         let mut webhook_events = std::collections::HashMap::new();
+        let allowed_events = std::env::var("ALLOWED_EVENTS")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+            .map(|items| items.into_iter().collect::<HashSet<_>>());
         // pre-load from env
         for (key, val) in std::env::vars() {
             if let Some(event) = key.strip_prefix("WEBHOOK_EVENTS_") {
@@ -42,10 +47,18 @@ impl Settings {
                 webhook_events.insert(event.to_string(), enabled);
             }
         }
-        Self { webhook_events }
+        Self {
+            webhook_events,
+            allowed_events,
+        }
     }
 
     pub fn is_event_enabled(&self, event: &str) -> bool {
+        if let Some(allowed) = &self.allowed_events {
+            if !allowed.contains(event) {
+                return false;
+            }
+        }
         self.webhook_events.get(event).copied().unwrap_or(true)
     }
 }

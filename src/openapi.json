@@ -6198,11 +6198,12 @@
             "type": "string"
           },
           "mimetype": {
-            "type": "string"
+            "type": "string",
+            "description": "MIME do arquivo. Quando mediaType não é informado, usamos este campo para inferir o tipo"
           },
           "mediaType": {
             "type": "string",
-            "description": "Tipo da mídia: image, video, voice, file"
+            "description": "Tipo da mídia: image, video, voice, file, sticker"
           },
           "quoted": {
             "type": "object",

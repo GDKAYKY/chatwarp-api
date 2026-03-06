@@ -133,11 +133,30 @@ pub async fn send_message(
     let has_text = text_value.is_some();
 
     if has_media {
+        let inferred_media_type = body
+            .get("mimetype")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase())
+            .and_then(|mime| {
+                if mime == "image/webp" {
+                    Some("sticker".to_string())
+                } else if mime.starts_with("image/") {
+                    Some("image".to_string())
+                } else if mime.starts_with("video/") {
+                    Some("video".to_string())
+                } else if mime.starts_with("audio/") {
+                    Some("voice".to_string())
+                } else {
+                    Some("file".to_string())
+                }
+            });
+
         let media_type = body
             .get("mediaType")
             .or_else(|| body.get("media_type"))
             .and_then(|v| v.as_str())
             .map(|s| s.trim().to_lowercase())
+            .or(inferred_media_type)
             .unwrap_or_else(|| "image".to_string());
 
         let (message_type, caption_allowed) = match media_type.as_str() {
@@ -145,6 +164,7 @@ pub async fn send_message(
             "video" => ("video", true),
             "voice" | "audio" => ("voice", false),
             "file" | "document" => ("file", true),
+            "sticker" => ("sticker", false),
             _ => {
                 return (
                     StatusCode::BAD_REQUEST,

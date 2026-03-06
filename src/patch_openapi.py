@@ -72,7 +72,8 @@ NEW_SCHEMAS = {
             "url":      {"type": "string", "format": "uri", "description": "URL da mídia (image/file/voice/video)"},
             "base64":   {"type": "string", "description": "Conteúdo em base64 (alternativa a url)"},
             "filename": {"type": "string"},
-            "mimetype": {"type": "string"},
+            "mimetype": {"type": "string", "description": "MIME do arquivo. Quando mediaType não é informado, usamos este campo para inferir o tipo"},
+            "mediaType": {"type": "string", "description": "Tipo da mídia: image, video, voice, file, sticker"},
             "quoted": {
                 "type": "object",
                 "properties": {

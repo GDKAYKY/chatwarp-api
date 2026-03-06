@@ -152,6 +152,13 @@ async fn build_message(
                 None
             }
         },
+        "sticker" => match build_sticker_message(client, payload).await {
+            Ok(msg) => Some(msg),
+            Err(err) => {
+                log::warn!("Failed to build sticker message: {err}");
+                None
+            }
+        },
         _ => {
             log::warn!("Message type {} not implemented in worker", message_type);
             None
@@ -324,6 +331,39 @@ async fn build_document_message(client: &Client, payload: &Value) -> anyhow::Res
             file_enc_sha256: Some(upload.file_enc_sha256),
             file_sha256: Some(upload.file_sha256),
             file_length: Some(upload.file_length),
+            context_info,
+            ..Default::default()
+        })),
+        ..Default::default()
+    })
+}
+
+async fn build_sticker_message(client: &Client, payload: &Value) -> anyhow::Result<wa::Message> {
+    let mut mimetype = payload
+        .get("mimetype")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| Some("image/webp".to_string()));
+
+    let is_animated = payload
+        .get("isAnimated")
+        .or_else(|| payload.get("is_animated"))
+        .and_then(|v| v.as_bool());
+
+    let data = extract_media_bytes(client, payload, &mut mimetype).await?;
+    let upload = client.upload(data, MediaType::Sticker).await?;
+    let context_info = build_reply_context_info(payload);
+
+    Ok(wa::Message {
+        sticker_message: Some(Box::new(wa::message::StickerMessage {
+            mimetype,
+            url: Some(upload.url),
+            direct_path: Some(upload.direct_path),
+            media_key: Some(upload.media_key),
+            file_enc_sha256: Some(upload.file_enc_sha256),
+            file_sha256: Some(upload.file_sha256),
+            file_length: Some(upload.file_length),
+            is_animated,
             context_info,
             ..Default::default()
         })),
