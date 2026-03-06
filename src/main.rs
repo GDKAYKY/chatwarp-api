@@ -133,6 +133,27 @@ fn main() {
                 }
             };
 
+        let api_password = std::env::var("CHATWARP_PASSWORD")
+            .ok()
+            .filter(|v| !v.is_empty());
+        let api_password_hash = api_password.as_deref().map(|v| {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(v.as_bytes());
+            let result = hasher.finalize();
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&result[..]);
+            out
+        });
+        if api_password_hash.is_some() {
+            info!("HTTP API auth enabled via CHATWARP_PASSWORD");
+        }
+
+        let session_ttl_seconds = std::env::var("CHATWARP_SESSION_TTL_SECONDS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(1800);
+
         // Initialize AppState
         let app_state = Arc::new(AppState {
             instances: DashMap::new(),
@@ -140,6 +161,8 @@ fn main() {
             api_store: api_store.clone(),
             clients: DashMap::new(),
             settings: Arc::new(tokio::sync::RwLock::new(initial_settings)),
+            api_password_hash,
+            session_ttl_seconds,
         });
 
         // Initialize default instance
@@ -232,7 +255,17 @@ fn main() {
                             .await
                             {
                                 Ok(Some(cfg)) if cfg.enabled && cfg.base64 => true,
-                                _ => false,
+                                _ => {
+                                    let global_enabled = std::env::var("WEBHOOK_GLOBAL_ENABLED")
+                                        .ok()
+                                        .map(|v| v == "true" || v == "1")
+                                        .unwrap_or(false);
+                                    let global_base64 = std::env::var("WEBHOOK_GLOBAL_WEBHOOK_BASE64")
+                                        .ok()
+                                        .map(|v| v == "true" || v == "1")
+                                        .unwrap_or(false);
+                                    global_enabled && global_base64
+                                }
                             };
 
                             let message_payload = if let Some(image) = msg.image_message.as_deref() {

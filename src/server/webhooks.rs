@@ -311,12 +311,16 @@ async fn load_global_webhook(state: &AppState, event: &str) -> Option<WebhookCon
         .ok()
         .map(|v| v == "true" || v == "1")
         .unwrap_or(false);
+    let base64 = std::env::var("WEBHOOK_GLOBAL_WEBHOOK_BASE64")
+        .ok()
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
 
     Some(WebhookConfig {
         enabled: true,
         url,
         by_events,
-        base64: false,
+        base64,
         headers: HashMap::new(),
         events: None,
     })
