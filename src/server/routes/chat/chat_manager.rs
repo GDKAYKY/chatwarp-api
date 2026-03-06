@@ -72,6 +72,58 @@ pub async fn send_message(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> axum::response::Response {
+    let mut body = body;
+    let reply_message_id = body
+        .get("reply")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    if reply_message_id.is_some() {
+        let quoted = body.get("quoted").and_then(|v| v.as_object());
+        let quoted_message_id = reply_message_id.or_else(|| {
+            quoted
+            .and_then(|q| q.get("messageId").or_else(|| q.get("message_id")))
+            .and_then(|v| v.as_str())
+        });
+
+        if quoted_message_id.is_none() {
+            if let Some(obj) = body.as_object() {
+                let mut updated = obj.clone();
+                updated.remove("reply");
+                updated.remove("quoted");
+                body = Value::Object(updated);
+            }
+        } else if let Some(obj) = body.as_object() {
+            let mut updated = obj.clone();
+            let mut quoted_updated = updated
+                .get("quoted")
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
+            if let Some(message_id) = quoted_message_id {
+                quoted_updated.insert("messageId".to_string(), json!(message_id));
+            }
+            if !quoted_updated.is_empty() {
+                let has_chat_id = quoted_updated
+                    .get("chatId")
+                    .or_else(|| quoted_updated.get("chat_id"))
+                    .and_then(|v| v.as_str())
+                    .is_some();
+                if !has_chat_id {
+                    if let Some(chat_id) = updated.get("chatId").and_then(|v| v.as_str()) {
+                        quoted_updated.insert("chatId".to_string(), json!(chat_id));
+                    }
+                }
+            }
+            updated.insert("reply".to_string(), json!(true));
+            if !quoted_updated.is_empty() {
+                updated.insert("quoted".to_string(), Value::Object(quoted_updated));
+            }
+            body = Value::Object(updated);
+        }
+    }
+
     let has_media = body.get("base64").is_some() || body.get("url").is_some();
     let text_value = body
         .get("text")
@@ -434,6 +486,28 @@ pub async fn forward_message(
 pub async fn reply_message(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
-) -> impl IntoResponse {
-    send_message_type(state, body, "reply", false).await
+) -> axum::response::Response {
+    let mut body = body;
+    let quoted_message_id = body
+        .get("quoted")
+        .and_then(|v| v.as_object())
+        .and_then(|q| q.get("messageId").or_else(|| q.get("message_id")))
+        .and_then(|v| v.as_str());
+
+    if quoted_message_id.is_none() {
+        return send_message_type(state, body, "text", false)
+            .await
+            .into_response();
+    }
+
+    if let Some(obj) = body.as_object() {
+        let mut updated = obj.clone();
+        updated.insert("reply".to_string(), json!(quoted_message_id));
+        updated.remove("quoted");
+        body = Value::Object(updated);
+    }
+
+    send_message_type(state, body, "text", false)
+        .await
+        .into_response()
 }

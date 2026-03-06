@@ -66,6 +66,7 @@ NEW_SCHEMAS = {
         "properties": {
             "session":  {"type": "string", "example": "default"},
             "chatId":   {"type": "string", "example": "5511999999999@s.whatsapp.net"},
+            "reply":    {"type": "string", "description": "MessageId do reply. Se não houver messageId, o envio cai para mensagem normal"},
             "text":     {"type": "string"},
             "caption":  {"type": "string"},
             "url":      {"type": "string", "format": "uri", "description": "URL da mídia (image/file/voice/video)"},

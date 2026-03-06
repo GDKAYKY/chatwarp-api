@@ -6175,6 +6175,10 @@
             "type": "string",
             "example": "5511999999999@s.whatsapp.net"
           },
+          "reply": {
+            "type": "string",
+            "description": "MessageId do reply. Se não houver messageId, o envio cai para mensagem normal"
+          },
           "text": {
             "type": "string"
           },

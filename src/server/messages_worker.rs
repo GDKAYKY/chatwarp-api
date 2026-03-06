@@ -108,10 +108,21 @@ async fn build_message(
     match message_type {
         "text" => {
             let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            Some(wa::Message {
-                conversation: Some(text.to_string()),
-                ..Default::default()
-            })
+            if let Some(context_info) = build_reply_context_info(payload) {
+                Some(wa::Message {
+                    extended_text_message: Some(Box::new(wa::message::ExtendedTextMessage {
+                        text: Some(text.to_string()),
+                        context_info: Some(context_info),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })
+            } else {
+                Some(wa::Message {
+                    conversation: Some(text.to_string()),
+                    ..Default::default()
+                })
+            }
         }
         "image" => match build_image_message(client, payload).await {
             Ok(msg) => Some(msg),
@@ -148,6 +159,42 @@ async fn build_message(
     }
 }
 
+fn build_reply_context_info(payload: &Value) -> Option<Box<wa::ContextInfo>> {
+    let reply_message_id = payload
+        .get("reply")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    let quoted = payload.get("quoted").and_then(|v| v.as_object());
+    let quoted_message_id = quoted
+        .as_ref()
+        .and_then(|q| q.get("messageId").or_else(|| q.get("message_id")))
+        .and_then(|v| v.as_str());
+
+    let stanza_id = match (reply_message_id, quoted_message_id) {
+        (Some(id), _) => id,
+        (None, Some(id)) => id,
+        _ => return None,
+    };
+    let remote_jid = quoted
+        .as_ref()
+        .and_then(|q| q.get("chatId").or_else(|| q.get("chat_id")))
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("chatId").and_then(|v| v.as_str()))
+        .or_else(|| payload.get("chat_id").and_then(|v| v.as_str()));
+    let participant = quoted
+        .and_then(|q| q.get("participant").or_else(|| q.get("sender")))
+        .and_then(|v| v.as_str());
+
+    Some(Box::new(wa::ContextInfo {
+        stanza_id: Some(stanza_id.to_string()),
+        participant: participant.map(|s| s.to_string()),
+        remote_jid: remote_jid.map(|s| s.to_string()),
+        ..Default::default()
+    }))
+}
+
 async fn build_image_message(client: &Client, payload: &Value) -> anyhow::Result<wa::Message> {
     let caption = payload
         .get("caption")
@@ -162,6 +209,7 @@ async fn build_image_message(client: &Client, payload: &Value) -> anyhow::Result
     let data = extract_media_bytes(client, payload, &mut mimetype).await?;
 
     let upload = client.upload(data, MediaType::Image).await?;
+    let context_info = build_reply_context_info(payload);
 
     Ok(wa::Message {
         image_message: Some(Box::new(wa::message::ImageMessage {
@@ -173,6 +221,7 @@ async fn build_image_message(client: &Client, payload: &Value) -> anyhow::Result
             file_enc_sha256: Some(upload.file_enc_sha256),
             file_sha256: Some(upload.file_sha256),
             file_length: Some(upload.file_length),
+            context_info,
             ..Default::default()
         })),
         ..Default::default()
@@ -192,6 +241,7 @@ async fn build_video_message(client: &Client, payload: &Value) -> anyhow::Result
 
     let data = extract_media_bytes(client, payload, &mut mimetype).await?;
     let upload = client.upload(data, MediaType::Video).await?;
+    let context_info = build_reply_context_info(payload);
 
     Ok(wa::Message {
         video_message: Some(Box::new(wa::message::VideoMessage {
@@ -203,6 +253,7 @@ async fn build_video_message(client: &Client, payload: &Value) -> anyhow::Result
             file_enc_sha256: Some(upload.file_enc_sha256),
             file_sha256: Some(upload.file_sha256),
             file_length: Some(upload.file_length),
+            context_info,
             ..Default::default()
         })),
         ..Default::default()
@@ -221,6 +272,7 @@ async fn build_audio_message(
 
     let data = extract_media_bytes(client, payload, &mut mimetype).await?;
     let upload = client.upload(data, MediaType::Audio).await?;
+    let context_info = build_reply_context_info(payload);
 
     Ok(wa::Message {
         audio_message: Some(Box::new(wa::message::AudioMessage {
@@ -232,6 +284,7 @@ async fn build_audio_message(
             file_sha256: Some(upload.file_sha256),
             file_length: Some(upload.file_length),
             ptt: Some(ptt),
+            context_info,
             ..Default::default()
         })),
         ..Default::default()
@@ -258,6 +311,7 @@ async fn build_document_message(client: &Client, payload: &Value) -> anyhow::Res
 
     let data = extract_media_bytes(client, payload, &mut mimetype).await?;
     let upload = client.upload(data, MediaType::Document).await?;
+    let context_info = build_reply_context_info(payload);
 
     Ok(wa::Message {
         document_message: Some(Box::new(wa::message::DocumentMessage {
@@ -270,6 +324,7 @@ async fn build_document_message(client: &Client, payload: &Value) -> anyhow::Res
             file_enc_sha256: Some(upload.file_enc_sha256),
             file_sha256: Some(upload.file_sha256),
             file_length: Some(upload.file_length),
+            context_info,
             ..Default::default()
         })),
         ..Default::default()
