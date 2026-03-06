@@ -34,17 +34,17 @@ RUN mkdir -p src \
     warp_core/libsignal/src \
     && echo "fn main() {}" > src/main.rs \
     && touch \
-        http_clients/ureq-client/src/lib.rs \
-        storages/sqlite-storage/src/lib.rs \
-        storages/postgres-storage/src/lib.rs \
-        transports/tokio-transport/src/lib.rs \
-        waproto/src/lib.rs \
-        warp_core/src/lib.rs \
-        warp_core/benches/reporting_token_benchmark.rs \
-        warp_core/appstate/src/lib.rs \
-        warp_core/binary/src/lib.rs \
-        warp_core/binary/benches/binary_benchmark.rs \
-        warp_core/libsignal/src/lib.rs
+    http_clients/ureq-client/src/lib.rs \
+    storages/sqlite-storage/src/lib.rs \
+    storages/postgres-storage/src/lib.rs \
+    transports/tokio-transport/src/lib.rs \
+    waproto/src/lib.rs \
+    warp_core/src/lib.rs \
+    warp_core/benches/reporting_token_benchmark.rs \
+    warp_core/appstate/src/lib.rs \
+    warp_core/binary/src/lib.rs \
+    warp_core/binary/benches/binary_benchmark.rs \
+    warp_core/libsignal/src/lib.rs
 
 # Compila todas as deps externas com stubs
 RUN cargo build --release --bin chatwarp-api --all-features
@@ -90,6 +90,6 @@ EXPOSE 8080
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:${PORT}/healthz || exit 1
+    CMD curl -f http://localhost:${PORT}/healthz || exit 1
 
 CMD ["chatwarp-api"]

@@ -80,7 +80,7 @@ async fn process_outbox(state: &AppState, client: &UreqHttpClient) -> anyhow::Re
             }
         }
 
-        if let Some(cfg) = load_global_webhook(event) {
+        if let Some(cfg) = load_global_webhook(state, event).await {
             targets.push(cfg);
         }
 
@@ -292,7 +292,7 @@ pub async fn load_instance_webhook(
     }))
 }
 
-fn load_global_webhook(event: &str) -> Option<WebhookConfig> {
+async fn load_global_webhook(state: &AppState, event: &str) -> Option<WebhookConfig> {
     let enabled = std::env::var("WEBHOOK_GLOBAL_ENABLED")
         .ok()
         .map(|v| v == "true" || v == "1")
@@ -301,7 +301,8 @@ fn load_global_webhook(event: &str) -> Option<WebhookConfig> {
         return None;
     }
 
-    if !event_env_enabled(event) {
+    let is_event_enabled = state.settings.read().await.is_event_enabled(event);
+    if !is_event_enabled {
         return None;
     }
 
@@ -319,12 +320,4 @@ fn load_global_webhook(event: &str) -> Option<WebhookConfig> {
         headers: HashMap::new(),
         events: None,
     })
-}
-
-fn event_env_enabled(event: &str) -> bool {
-    let key = format!("WEBHOOK_EVENTS_{}", event);
-    std::env::var(key)
-        .ok()
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(true)
 }

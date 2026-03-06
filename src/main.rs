@@ -64,6 +64,9 @@ fn main() {
         .build()
         .expect("Failed to build tokio runtime");
 
+    // Pre-load settings from env before spawning tokio threads
+    let initial_settings = chatwarp_api::server::Settings::new();
+
     rt.block_on(async {
         let database_url = std::env::var("DATABASE_URL").ok();
 
@@ -136,6 +139,7 @@ fn main() {
             sessions_runtime: DashMap::new(),
             api_store: api_store.clone(),
             clients: DashMap::new(),
+            settings: Arc::new(tokio::sync::RwLock::new(initial_settings)),
         });
 
         // Initialize default instance
@@ -148,9 +152,14 @@ fn main() {
             .insert(default_instance_name.clone(), SessionRuntime::new());
 
         chatwarp_api::server::webhooks::spawn_worker(app_state.clone());
-        chatwarp_api::server::webhooks::enqueue(&app_state, None, "APPLICATION_STARTUP", json!({}))
-            .await;
-        chatwarp_api::server::webhooks::enqueue(&app_state, None, "MESSAGES_SET", json!({})).await;
+        let startup_enabled = app_state.settings.read().await.is_event_enabled("APPLICATION_STARTUP");
+        if startup_enabled {
+            chatwarp_api::server::webhooks::enqueue(&app_state, None, "APPLICATION_STARTUP", json!({})).await;
+        }
+        let messages_set_enabled = app_state.settings.read().await.is_event_enabled("MESSAGES_SET");
+        if messages_set_enabled {
+            chatwarp_api::server::webhooks::enqueue(&app_state, None, "MESSAGES_SET", json!({})).await;
+        }
 
         let transport_factory = TokioWebSocketTransportFactory::new();
         let http_client = UreqHttpClient::new();
@@ -269,21 +278,34 @@ fn main() {
                                 })
                             };
 
+                            let mut message_item = serde_json::Map::new();
+                            let mut key_item = serde_json::Map::new();
+                            key_item.insert("remoteJid".to_string(), json!(remote_jid));
+                            key_item.insert("fromMe".to_string(), json!(is_from_me));
+                            key_item.insert("MessageId".to_string(), json!(info.id));
+                            key_item.insert(
+                                "participant".to_string(),
+                                if is_from_me {
+                                    serde_json::Value::Null
+                                } else {
+                                    json!(sender_jid.clone())
+                                },
+                            );
+                            if !info.push_name.is_empty() {
+                                key_item.insert("senderName".to_string(), json!(info.push_name));
+                            }
+                            message_item.insert(
+                                "key".to_string(),
+                                serde_json::Value::Object(key_item),
+                            );
+                            message_item.insert("message".to_string(), message_payload);
+
                             chatwarp_api::server::webhooks::enqueue(
                                 &state,
                                 Some(&instance_name),
                                 "MESSAGES_UPSERT",
                                 json!({
-                                    "messages": [{
-                                        "key": {
-                                            "remoteJid": remote_jid,
-                                            "fromMe": is_from_me,
-                                            "MessageId": info.id,
-                                            "participant": if is_from_me { None } else { Some(sender_jid.clone()) }
-                                        },
-                                        "message": message_payload,
-                                        // Include raw struct format for backward compatibility if needed, but above object looks more like Evolution/Baileys
-                                    }],
+                                    "messages": [serde_json::Value::Object(message_item)],
                                     "type": "notify"
                                 })
                             ).await;
