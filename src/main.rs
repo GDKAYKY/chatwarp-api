@@ -163,6 +163,7 @@ fn main() {
             settings: Arc::new(tokio::sync::RwLock::new(initial_settings)),
             api_password_hash,
             session_ttl_seconds,
+            message_notify: Arc::new(tokio::sync::Notify::new()),
         });
 
         // Initialize default instance

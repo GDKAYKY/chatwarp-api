@@ -275,6 +275,7 @@ async fn send_message_type(
     .await
     {
         Ok(message) => {
+            state.message_notify.notify_one();
             webhooks::enqueue(
                 &state,
                 Some(&session),

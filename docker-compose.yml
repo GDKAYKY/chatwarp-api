@@ -10,6 +10,7 @@ services:
     image: chatwarp-api:local
     container_name: chatwarp-api
     restart: unless-stopped
+    networks: [chatwarp-net]
     env_file:
       - .env
     environment:
@@ -30,3 +31,7 @@ services:
 
 volumes:
   chatwarp-data:
+
+networks:
+  chatwarp-net:
+    external: true

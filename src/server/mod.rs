@@ -14,7 +14,7 @@ use image::Luma;
 use qrcode::QrCode;
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 
 pub mod handlers;
 pub mod messages_worker;
@@ -29,6 +29,7 @@ pub struct AppState {
     pub settings: Arc<RwLock<Settings>>,
     pub api_password_hash: Option<[u8; 32]>,
     pub session_ttl_seconds: u64,
+    pub message_notify: Arc<Notify>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -162,7 +163,18 @@ async fn auth_middleware(
     };
 
     let path = req.uri().path();
-    if path == "/auth/login" || path == "/auth/logout" {
+    if path == "/auth/login"
+        || path == "/auth/logout"
+        || path == "/healthz"
+        || path == "/readyz"
+        || path == "/health"
+        || path == "/ping"
+        || path == "/metrics"
+        || path == "/openapi.json"
+        || path == "/docs/openapi.json"
+        || path == "/swagger"
+        || path == "/docs/swagger"
+    {
         return next.run(req).await;
     }
 

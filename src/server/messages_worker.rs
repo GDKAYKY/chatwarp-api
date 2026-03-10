@@ -3,7 +3,9 @@ use crate::client::Client;
 use crate::http::HttpRequest;
 use crate::server::AppState;
 use base64::Engine as _;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 use uuid::Uuid;
@@ -12,79 +14,26 @@ use warp_core::download::MediaType;
 use warp_core_binary::jid::Jid;
 
 pub async fn spawn_messages_worker(app_state: Arc<AppState>) {
+    const SESSION_WAIT_TTL_MINUTES: i64 = 10;
+    const POLL_FALLBACK_SECONDS: u64 = 30;
+
     loop {
-        let rows = match app_state
-            .api_store
-            .query_json(
-                "SELECT row_to_json(t)::jsonb as value FROM ( \
-                    SELECT id, session, chat_id, message_type, payload \
-                    FROM api_messages \
-                    WHERE status = 'queued' \
-                    ORDER BY created_at \
-                    LIMIT 25 \
-                ) t",
-                vec![],
-            )
-            .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                log::error!("Error fetching queued messages: {}", e);
+        let processed_any = match drain_message_batch(&app_state, SESSION_WAIT_TTL_MINUTES).await {
+            Ok(processed_any) => processed_any,
+            Err(err) => {
+                log::error!("Error processing queued messages: {}", err);
                 sleep(Duration::from_secs(5)).await;
-                continue;
+                false
             }
         };
 
-        if rows.is_empty() {
-            sleep(Duration::from_secs(2)).await;
+        if processed_any {
             continue;
         }
 
-        for row in rows {
-            let id_str = row.get("id").and_then(|v| v.as_str());
-            let session = row.get("session").and_then(|v| v.as_str());
-            let chat_id_str = row.get("chat_id").and_then(|v| v.as_str());
-            let message_type = row.get("message_type").and_then(|v| v.as_str());
-            let payload = row.get("payload").cloned().unwrap_or(Value::Null);
-
-            let (Some(id_str), Some(session), Some(chat_id_str), Some(message_type)) =
-                (id_str, session, chat_id_str, message_type)
-            else {
-                continue;
-            };
-
-            let Ok(uuid) = Uuid::parse_str(id_str) else {
-                continue;
-            };
-
-            let Ok(jid) = chat_id_str.parse::<Jid>() else {
-                let _ = mark_status(&app_state, uuid, "failed").await;
-                continue;
-            };
-
-            if let Some(client_ref) = app_state.clients.get(session) {
-                let client = client_ref.value().clone();
-                let message_opt = build_message(&client, message_type, &payload).await;
-
-                if let Some(msg) = message_opt {
-                    if let Err(e) = client.send_message(jid.clone(), msg).await {
-                        log::error!("Error sending message {}: {:?}", id_str, e);
-                        let _ = mark_status(&app_state, uuid, "failed").await;
-                    } else {
-                        let _ = mark_status(&app_state, uuid, "sent").await;
-                    }
-                } else {
-                    log::warn!("Could not build message for type '{}'", message_type);
-                    let _ = mark_status(&app_state, uuid, "failed").await;
-                }
-            } else {
-                log::warn!(
-                    "Session {} not found for queued message {}",
-                    session,
-                    id_str
-                );
-                // Do not fail it yet; session might be starting
-            }
+        tokio::select! {
+            _ = app_state.message_notify.notified() => {}
+            _ = sleep(Duration::from_secs(POLL_FALLBACK_SECONDS)) => {}
         }
     }
 }
@@ -98,6 +47,144 @@ async fn mark_status(state: &AppState, id: Uuid, status: &str) -> anyhow::Result
         )
         .await
         .map(|_| ())
+}
+
+async fn mark_processing(state: &AppState, id: Uuid) -> anyhow::Result<bool> {
+    let affected = state
+        .api_store
+        .execute(
+            "UPDATE api_messages SET status = 'processing' WHERE id = $1 AND status = 'queued'",
+            vec![ApiBind::Uuid(id)],
+        )
+        .await?;
+    Ok(affected == 1)
+}
+
+fn should_fail_missing_session(created_at: Option<DateTime<Utc>>, ttl_minutes: i64) -> bool {
+    let Some(created_at) = created_at else {
+        return false;
+    };
+
+    Utc::now().signed_duration_since(created_at) > chrono::Duration::minutes(ttl_minutes)
+}
+
+async fn drain_message_batch(
+    app_state: &Arc<AppState>,
+    session_wait_ttl_minutes: i64,
+) -> anyhow::Result<bool> {
+    let rows = app_state
+        .api_store
+        .query_json(
+            "SELECT row_to_json(t)::jsonb as value FROM ( \
+                SELECT id, session, chat_id, message_type, payload, created_at \
+                FROM api_messages \
+                WHERE status = 'queued' \
+                ORDER BY created_at \
+                LIMIT 50 \
+            ) t",
+            vec![],
+        )
+        .await?;
+
+    if rows.is_empty() {
+        return Ok(false);
+    }
+
+    let mut by_session: HashMap<String, Vec<Value>> = HashMap::new();
+    for row in rows {
+        let Some(session) = row.get("session").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        by_session.entry(session.to_string()).or_default().push(row);
+    }
+
+    let mut join_set = tokio::task::JoinSet::new();
+    for (session, rows) in by_session {
+        let state = app_state.clone();
+        join_set.spawn(async move {
+            for row in rows {
+                process_single_message(&state, &session, row, session_wait_ttl_minutes).await;
+            }
+        });
+    }
+
+    while let Some(result) = join_set.join_next().await {
+        if let Err(err) = result {
+            log::error!("Message worker task failed: {}", err);
+        }
+    }
+
+    Ok(true)
+}
+
+async fn process_single_message(
+    app_state: &Arc<AppState>,
+    session: &str,
+    row: Value,
+    session_wait_ttl_minutes: i64,
+) {
+    let id_str = row.get("id").and_then(|v| v.as_str());
+    let chat_id_str = row.get("chat_id").and_then(|v| v.as_str());
+    let message_type = row.get("message_type").and_then(|v| v.as_str());
+    let payload = row.get("payload").cloned().unwrap_or(Value::Null);
+    let created_at = row
+        .get("created_at")
+        .and_then(|v| v.as_str())
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+
+    let (Some(id_str), Some(chat_id_str), Some(message_type)) = (id_str, chat_id_str, message_type)
+    else {
+        return;
+    };
+
+    let Ok(uuid) = Uuid::parse_str(id_str) else {
+        return;
+    };
+
+    let Ok(jid) = chat_id_str.parse::<Jid>() else {
+        let _ = mark_status(app_state, uuid, "failed").await;
+        return;
+    };
+
+    let Some(client_ref) = app_state.clients.get(session) else {
+        log::warn!(
+            "Session {} not found for queued message {}",
+            session,
+            id_str
+        );
+        if should_fail_missing_session(created_at, session_wait_ttl_minutes) {
+            let _ = mark_status(app_state, uuid, "failed").await;
+        }
+        return;
+    };
+
+    let claimed = match mark_processing(app_state, uuid).await {
+        Ok(claimed) => claimed,
+        Err(err) => {
+            log::error!("Error claiming message {}: {}", id_str, err);
+            return;
+        }
+    };
+
+    if !claimed {
+        return;
+    }
+
+    let client = client_ref.value().clone();
+    let message_opt = build_message(&client, message_type, &payload).await;
+
+    if let Some(msg) = message_opt {
+        if let Err(e) = client.send_message(jid.clone(), msg).await {
+            log::error!("Error sending message {}: {:?}", id_str, e);
+            let _ = mark_status(app_state, uuid, "failed").await;
+        } else {
+            let _ = mark_status(app_state, uuid, "sent").await;
+        }
+    } else {
+        log::warn!("Could not build message for type '{}'", message_type);
+        let _ = mark_status(app_state, uuid, "failed").await;
+    }
 }
 
 async fn build_message(
@@ -142,6 +229,13 @@ async fn build_message(
             Ok(msg) => Some(msg),
             Err(err) => {
                 log::warn!("Failed to build voice message: {err}");
+                None
+            }
+        },
+        "audio" => match build_audio_message(client, payload, false).await {
+            Ok(msg) => Some(msg),
+            Err(err) => {
+                log::warn!("Failed to build audio message: {err}");
                 None
             }
         },
@@ -342,8 +436,7 @@ async fn build_sticker_message(client: &Client, payload: &Value) -> anyhow::Resu
     let mut mimetype = payload
         .get("mimetype")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| Some("image/webp".to_string()));
+        .map(|s| s.to_string());
 
     let is_animated = payload
         .get("isAnimated")
@@ -353,6 +446,7 @@ async fn build_sticker_message(client: &Client, payload: &Value) -> anyhow::Resu
     let data = extract_media_bytes(client, payload, &mut mimetype).await?;
     let upload = client.upload(data, MediaType::Sticker).await?;
     let context_info = build_reply_context_info(payload);
+    let mimetype = mimetype.or_else(|| Some("image/webp".to_string()));
 
     Ok(wa::Message {
         sticker_message: Some(Box::new(wa::message::StickerMessage {
