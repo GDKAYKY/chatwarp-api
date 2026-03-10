@@ -154,6 +154,8 @@ fn main() {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(1800);
 
+        let (message_notify_tx, message_notify_rx) = tokio::sync::mpsc::channel(1024);
+
         // Initialize AppState
         let app_state = Arc::new(AppState {
             instances: DashMap::new(),
@@ -163,7 +165,7 @@ fn main() {
             settings: Arc::new(tokio::sync::RwLock::new(initial_settings)),
             api_password_hash,
             session_ttl_seconds,
-            message_notify: Arc::new(tokio::sync::Notify::new()),
+            message_notify: message_notify_tx,
         });
 
         // Initialize default instance
@@ -685,9 +687,10 @@ fn main() {
         app_state
             .clients
             .insert(default_instance_name.clone(), bot.client());
-        tokio::spawn(
-            chatwarp_api::server::messages_worker::spawn_messages_worker(app_state.clone()),
-        );
+        tokio::spawn(chatwarp_api::server::messages_worker::spawn_messages_worker(
+            app_state.clone(),
+            message_notify_rx,
+        ));
 
         let bot_handle = match bot.run().await {
             Ok(handle) => handle,

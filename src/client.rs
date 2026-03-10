@@ -9,6 +9,8 @@ use crate::handshake;
 use crate::lid_pn_cache::LidPnCache;
 use crate::pair;
 use anyhow::{Result, anyhow};
+use arc_swap::ArcSwapOption;
+use crossbeam::queue::ArrayQueue;
 use dashmap::DashMap;
 use indexmap::IndexMap;
 use moka::future::Cache;
@@ -84,10 +86,10 @@ pub struct Client {
     pub(crate) transport_events:
         Arc<Mutex<Option<async_channel::Receiver<crate::transport::TransportEvent>>>>,
     pub(crate) transport_factory: Arc<dyn crate::transport::TransportFactory>,
-    pub(crate) noise_socket: Arc<Mutex<Option<Arc<NoiseSocket>>>>,
+    pub(crate) noise_socket: Arc<ArcSwapOption<NoiseSocket>>,
 
     pub(crate) response_waiters:
-        Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<warp_core_binary::Node>>>>,
+        DashMap<String, tokio::sync::oneshot::Sender<warp_core_binary::Node>>,
     pub(crate) unique_id: String,
     pub(crate) id_counter: Arc<AtomicU64>,
 
@@ -164,7 +166,7 @@ pub struct Client {
     /// Tracks the pending pair code request and ephemeral keys.
     pub(crate) pair_code_state: Arc<Mutex<warp_core::pair_code::PairCodeState>>,
 
-    pub(crate) send_buffer_pool: Arc<Mutex<Vec<Vec<u8>>>>,
+    pub(crate) send_buffer_pool: Arc<ArrayQueue<Vec<u8>>>,
 
     /// Custom handlers for encrypted message types
     pub custom_enc_handlers: Arc<DashMap<String, Arc<dyn EncHandler>>>,
@@ -218,9 +220,9 @@ impl Client {
             transport: Arc::new(Mutex::new(None)),
             transport_events: Arc::new(Mutex::new(None)),
             transport_factory,
-            noise_socket: Arc::new(Mutex::new(None)),
+            noise_socket: Arc::new(ArcSwapOption::from(None)),
 
-            response_waiters: Arc::new(Mutex::new(HashMap::new())),
+            response_waiters: DashMap::new(),
             unique_id: format!("{}.{}", unique_id_bytes[0], unique_id_bytes[1]),
             id_counter: Arc::new(AtomicU64::new(0)),
 
@@ -281,7 +283,7 @@ impl Client {
             major_sync_task_sender: tx,
             pairing_cancellation_tx: Arc::new(Mutex::new(None)),
             pair_code_state: Arc::new(Mutex::new(warp_core::pair_code::PairCodeState::default())),
-            send_buffer_pool: Arc::new(Mutex::new(Vec::with_capacity(4))),
+            send_buffer_pool: Arc::new(ArrayQueue::new(4)),
             custom_enc_handlers: Arc::new(DashMap::new()),
             pdo_pending_requests: crate::pdo::new_pdo_cache(),
             device_registry_cache: Cache::builder()
@@ -472,7 +474,7 @@ impl Client {
 
         *self.transport.lock().await = Some(transport);
         *self.transport_events.lock().await = Some(transport_events);
-        *self.noise_socket.lock().await = Some(noise_socket);
+        self.noise_socket.store(Some(noise_socket));
 
         // Notify waiters that socket is ready (before login)
         self.socket_ready_notifier.notify_waiters();
@@ -499,7 +501,7 @@ impl Client {
         self.is_logged_in.store(false, Ordering::Relaxed);
         *self.transport.lock().await = None;
         *self.transport_events.lock().await = None;
-        *self.noise_socket.lock().await = None;
+        self.noise_socket.store(None);
         self.retried_group_messages.invalidate_all();
         // Reset offline sync state for next connection
         self.offline_sync_completed.store(false, Ordering::Relaxed);
@@ -588,7 +590,7 @@ impl Client {
         self: &Arc<Self>,
         encrypted_frame: &bytes::Bytes,
     ) -> Option<warp_core_binary::node::Node> {
-        let noise_socket_arc = { self.noise_socket.lock().await.clone() };
+        let noise_socket_arc = self.noise_socket.load_full();
         let noise_socket = match noise_socket_arc {
             Some(s) => s,
             None => {
@@ -664,7 +666,7 @@ impl Client {
         if node.tag.as_str() == "iq" {
             let id_opt = node.attrs.get("id");
             if let Some(id) = id_opt {
-                let has_waiter = self.response_waiters.lock().await.contains_key(id.as_str());
+                let has_waiter = self.response_waiters.contains_key(id.as_str());
                 if has_waiter && self.handle_iq_response(Arc::clone(&node)).await {
                     return;
                 }
@@ -1119,7 +1121,7 @@ impl Client {
     pub(crate) async fn handle_ack_response(&self, node: Node) -> bool {
         let id_opt = node.attrs.get("id").cloned();
         if let Some(id) = id_opt
-            && let Some(waiter) = self.response_waiters.lock().await.remove(&id)
+            && let Some((_, waiter)) = self.response_waiters.remove(&id)
         {
             if waiter.send(node).is_err() {
                 warn!(target: "Client/Ack", "Failed to send ACK response to waiter for ID {id}. Receiver was likely dropped.");
@@ -1600,9 +1602,7 @@ impl Client {
     }
 
     pub fn is_connected(&self) -> bool {
-        self.noise_socket
-            .try_lock()
-            .is_ok_and(|guard| guard.is_some())
+        self.noise_socket.load_full().is_some()
     }
 
     pub fn is_logged_in(&self) -> bool {
@@ -1718,7 +1718,7 @@ impl Client {
     }
 
     pub async fn send_node(&self, node: Node) -> Result<(), ClientError> {
-        let noise_socket_arc = { self.noise_socket.lock().await.clone() };
+        let noise_socket_arc = self.noise_socket.load_full();
         let noise_socket = match noise_socket_arc {
             Some(socket) => socket,
             None => return Err(ClientError::NotConnected),
@@ -1726,22 +1726,25 @@ impl Client {
 
         trace!(target: "Client/Send", "{}", DisplayableNode(&node));
 
-        let mut pool_guard = self.send_buffer_pool.lock().await;
-        let mut plaintext_buf = pool_guard.pop().unwrap_or_else(|| Vec::with_capacity(1024));
-        let mut encrypted_buf = pool_guard.pop().unwrap_or_else(|| Vec::with_capacity(1024));
-        drop(pool_guard);
+        let mut plaintext_buf = self
+            .send_buffer_pool
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(1024));
+        let mut encrypted_buf = self
+            .send_buffer_pool
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(1024));
 
         plaintext_buf.clear();
         encrypted_buf.clear();
 
         if let Err(e) = warp_core_binary::marshal::marshal_to(&node, &mut plaintext_buf) {
             error!("Failed to marshal node: {e:?}");
-            let mut g = self.send_buffer_pool.lock().await;
             if plaintext_buf.capacity() <= MAX_POOLED_BUFFER_CAP {
-                g.push(plaintext_buf);
+                let _ = self.send_buffer_pool.push(plaintext_buf);
             }
             if encrypted_buf.capacity() <= MAX_POOLED_BUFFER_CAP {
-                g.push(encrypted_buf);
+                let _ = self.send_buffer_pool.push(encrypted_buf);
             }
             return Err(SocketError::Crypto("Marshal error".to_string()).into());
         }
@@ -1754,23 +1757,21 @@ impl Client {
             Err(mut e) => {
                 let p_buf = std::mem::take(&mut e.plaintext_buf);
                 let o_buf = std::mem::take(&mut e.out_buf);
-                let mut g = self.send_buffer_pool.lock().await;
                 if p_buf.capacity() <= MAX_POOLED_BUFFER_CAP {
-                    g.push(p_buf);
+                    let _ = self.send_buffer_pool.push(p_buf);
                 }
                 if o_buf.capacity() <= MAX_POOLED_BUFFER_CAP {
-                    g.push(o_buf);
+                    let _ = self.send_buffer_pool.push(o_buf);
                 }
                 return Err(e.into());
             }
         };
 
-        let mut g = self.send_buffer_pool.lock().await;
         if plaintext_buf.capacity() <= MAX_POOLED_BUFFER_CAP {
-            g.push(plaintext_buf);
+            let _ = self.send_buffer_pool.push(plaintext_buf);
         }
         if encrypted_buf.capacity() <= MAX_POOLED_BUFFER_CAP {
-            g.push(encrypted_buf);
+            let _ = self.send_buffer_pool.push(encrypted_buf);
         }
         Ok(())
     }

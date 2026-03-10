@@ -29,7 +29,11 @@ impl StanzaRouter {
     /// # Panics
     /// Panics if a handler is already registered for the same tag to prevent
     /// accidental overwrites during initialization.
-    pub fn register(&mut self, handler: Arc<dyn StanzaHandler>) {
+    pub fn register<T>(&mut self, handler: Arc<T>)
+    where
+        T: StanzaHandler + 'static,
+    {
+        let handler: Arc<dyn StanzaHandler> = handler;
         let tag = handler.tag();
         if self.handlers.insert(tag, handler).is_some() {
             panic!("Handler for tag '{}' already registered", tag);

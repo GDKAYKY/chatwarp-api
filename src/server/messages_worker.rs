@@ -8,12 +8,13 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 use waproto::whatsapp as wa;
 use warp_core::download::MediaType;
 use warp_core_binary::jid::Jid;
 
-pub async fn spawn_messages_worker(app_state: Arc<AppState>) {
+pub async fn spawn_messages_worker(app_state: Arc<AppState>, mut message_rx: mpsc::Receiver<()>) {
     const SESSION_WAIT_TTL_MINUTES: i64 = 10;
     const POLL_FALLBACK_SECONDS: u64 = 30;
 
@@ -32,7 +33,7 @@ pub async fn spawn_messages_worker(app_state: Arc<AppState>) {
         }
 
         tokio::select! {
-            _ = app_state.message_notify.notified() => {}
+            _ = message_rx.recv() => {}
             _ = sleep(Duration::from_secs(POLL_FALLBACK_SECONDS)) => {}
         }
     }
@@ -49,17 +50,6 @@ async fn mark_status(state: &AppState, id: Uuid, status: &str) -> anyhow::Result
         .map(|_| ())
 }
 
-async fn mark_processing(state: &AppState, id: Uuid) -> anyhow::Result<bool> {
-    let affected = state
-        .api_store
-        .execute(
-            "UPDATE api_messages SET status = 'processing' WHERE id = $1 AND status = 'queued'",
-            vec![ApiBind::Uuid(id)],
-        )
-        .await?;
-    Ok(affected == 1)
-}
-
 fn should_fail_missing_session(created_at: Option<DateTime<Utc>>, ttl_minutes: i64) -> bool {
     let Some(created_at) = created_at else {
         return false;
@@ -72,19 +62,47 @@ async fn drain_message_batch(
     app_state: &Arc<AppState>,
     session_wait_ttl_minutes: i64,
 ) -> anyhow::Result<bool> {
-    let rows = app_state
-        .api_store
-        .query_json(
-            "SELECT row_to_json(t)::jsonb as value FROM ( \
-                SELECT id, session, chat_id, message_type, payload, created_at \
-                FROM api_messages \
-                WHERE status = 'queued' \
-                ORDER BY created_at \
-                LIMIT 50 \
-            ) t",
-            vec![],
-        )
-        .await?;
+    let sessions: Vec<String> = app_state
+        .clients
+        .iter()
+        .map(|entry| entry.key().clone())
+        .collect();
+
+    if sessions.is_empty() {
+        return Ok(false);
+    }
+
+    let mut sql = String::from(
+        "WITH claimed AS ( \
+            SELECT id \
+            FROM api_messages \
+            WHERE status = 'queued' AND session IN (",
+    );
+    for (idx, _) in sessions.iter().enumerate() {
+        if idx > 0 {
+            sql.push_str(", ");
+        }
+        sql.push_str(&format!("${}", idx + 1));
+    }
+    sql.push_str(
+        ") \
+            ORDER BY created_at \
+            LIMIT 50 \
+            FOR UPDATE SKIP LOCKED \
+        ), updated AS ( \
+            UPDATE api_messages \
+            SET status = 'processing' \
+            FROM claimed \
+            WHERE api_messages.id = claimed.id \
+            RETURNING api_messages.id, api_messages.session, api_messages.chat_id, \
+                     api_messages.message_type, api_messages.payload, api_messages.created_at \
+        ) \
+        SELECT row_to_json(updated)::jsonb as value FROM updated",
+    );
+
+    let binds = sessions.into_iter().map(ApiBind::Text).collect();
+
+    let rows = app_state.api_store.query_json(&sql, binds).await?;
 
     if rows.is_empty() {
         return Ok(false);
@@ -155,21 +173,11 @@ async fn process_single_message(
         );
         if should_fail_missing_session(created_at, session_wait_ttl_minutes) {
             let _ = mark_status(app_state, uuid, "failed").await;
+        } else {
+            let _ = mark_status(app_state, uuid, "queued").await;
         }
         return;
     };
-
-    let claimed = match mark_processing(app_state, uuid).await {
-        Ok(claimed) => claimed,
-        Err(err) => {
-            log::error!("Error claiming message {}: {}", id_str, err);
-            return;
-        }
-    };
-
-    if !claimed {
-        return;
-    }
 
     let client = client_ref.value().clone();
     let message_opt = build_message(&client, message_type, &payload).await;

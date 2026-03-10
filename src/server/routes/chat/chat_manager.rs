@@ -275,24 +275,30 @@ async fn send_message_type(
     .await
     {
         Ok(message) => {
-            state.message_notify.notify_one();
-            webhooks::enqueue(
-                &state,
-                Some(&session),
-                "MESSAGES_QUEUE",
-                json!({"message": message.clone()}),
-            )
-            .await;
+            let _ = state.message_notify.try_send(());
 
-            if send_event {
+            let state_clone = state.clone();
+            let session_clone = session.clone();
+            let message_clone = message.clone();
+            tokio::spawn(async move {
                 webhooks::enqueue(
-                    &state,
-                    Some(&session),
-                    "SEND_MESSAGE",
-                    json!({"message": message.clone()}),
+                    &state_clone,
+                    Some(&session_clone),
+                    "MESSAGES_QUEUE",
+                    json!({"message": message_clone.clone()}),
                 )
                 .await;
-            }
+
+                if send_event {
+                    webhooks::enqueue(
+                        &state_clone,
+                        Some(&session_clone),
+                        "SEND_MESSAGE",
+                        json!({"message": message_clone}),
+                    )
+                    .await;
+                }
+            });
 
             (StatusCode::OK, Json(message))
         }

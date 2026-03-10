@@ -130,16 +130,13 @@ impl Client {
         let default_timeout = Duration::from_secs(75);
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.response_waiters
-            .lock()
-            .await
-            .insert(req_id.clone(), tx);
+        self.response_waiters.insert(req_id.clone(), tx);
 
         let request_utils = self.get_request_utils();
         let node = request_utils.build_iq_node(&query, Some(req_id.clone()));
 
         if let Err(e) = self.send_node(node).await {
-            self.response_waiters.lock().await.remove(&req_id);
+            self.response_waiters.remove(&req_id);
             return match e {
                 crate::client::ClientError::Socket(s_err) => Err(IqError::Socket(s_err)),
                 crate::client::ClientError::NotConnected => Err(IqError::NotConnected),
@@ -154,7 +151,7 @@ impl Client {
             },
             Ok(Err(_)) => Err(IqError::InternalChannelClosed),
             Err(_) => {
-                self.response_waiters.lock().await.remove(&req_id);
+                self.response_waiters.remove(&req_id);
                 Err(IqError::Timeout)
             }
         }
@@ -168,8 +165,8 @@ impl Client {
         let id_opt = node.attrs.get("id").cloned();
         if let Some(id) = id_opt {
             // First check if there's a waiter (without cloning)
-            let waiter = self.response_waiters.lock().await.remove(id.as_str());
-            if let Some(waiter) = waiter {
+            let waiter = self.response_waiters.remove(id.as_str());
+            if let Some((_, waiter)) = waiter {
                 // Try to unwrap the Arc, or clone if there are other references
                 let owned_node = Arc::try_unwrap(node).unwrap_or_else(|arc| (*arc).clone());
                 if waiter.send(owned_node).is_err() {

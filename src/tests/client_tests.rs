@@ -83,10 +83,7 @@
         .await;
 
         // Check initial pool size
-        let initial_pool_size = {
-            let pool = client.send_buffer_pool.lock().await;
-            pool.len()
-        };
+        let initial_pool_size = client.send_buffer_pool.len();
 
         // Attempt to send a node (this will fail because we're not connected, but that's okay)
         let test_node = NodeBuilder::new("test").attr("id", "test-123").build();
@@ -95,10 +92,7 @@
 
         // After the send attempt, the pool should have the same or more buffers
         // (depending on whether buffers were consumed and returned)
-        let final_pool_size = {
-            let pool = client.send_buffer_pool.lock().await;
-            pool.len()
-        };
+        let final_pool_size = client.send_buffer_pool.len();
 
         // The key assertion: we should not be leaking buffers
         // If the fix works, buffers should be returned to the pool
@@ -136,13 +130,9 @@
         // 1. Insert a waiter for a specific ID
         let test_id = "ack-test-123".to_string();
         let (tx, rx) = oneshot::channel();
-        client
-            .response_waiters
-            .lock()
-            .await
-            .insert(test_id.clone(), tx);
+        client.response_waiters.insert(test_id.clone(), tx);
         assert!(
-            client.response_waiters.lock().await.contains_key(&test_id),
+            client.response_waiters.contains_key(&test_id),
             "Waiter should be inserted before handling ack"
         );
 
@@ -174,7 +164,7 @@
 
         // 5. Verify the waiter was removed
         assert!(
-            !client.response_waiters.lock().await.contains_key(&test_id),
+            !client.response_waiters.contains_key(&test_id),
             "Waiter should be removed after handling"
         );
 
