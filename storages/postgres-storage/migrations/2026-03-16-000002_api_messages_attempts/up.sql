@@ -1,0 +1,2 @@
+ALTER TABLE api_messages
+    ADD COLUMN IF NOT EXISTS attempts INT DEFAULT 0;

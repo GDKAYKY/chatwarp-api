@@ -504,7 +504,7 @@ fn decrypt_message_with_record<R: Rng + CryptoRng>(
 
         match result {
             Ok(ptext) => {
-                log::info!(
+                log::trace!(
                     "decrypted {:?} message from {} with current session state (base key {})",
                     original_message_type,
                     remote_address,
@@ -579,7 +579,7 @@ fn decrypt_message_with_record<R: Rng + CryptoRng>(
 
         match result {
             Ok(ptext) => {
-                log::info!(
+                log::trace!(
                     "decrypted {:?} message from {} with PREVIOUS session state (base key {})",
                     original_message_type,
                     remote_address,

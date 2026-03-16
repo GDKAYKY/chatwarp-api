@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/http_clients/ureq-client/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/storages/postgres-storage/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/storages/sqlite-storage/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/transports/tokio-transport/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/waproto/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/warp_core/appstate/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/warp_core/benches" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/warp_core/binary/benches" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/warp_core/binary/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/warp_core/libsignal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/warp_core/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/warp_core/tests" isTestSource="true" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

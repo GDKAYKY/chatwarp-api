@@ -1,6 +1,7 @@
 use crate::api_store::ApiBind;
 use crate::client::Client;
 use crate::http::HttpRequest;
+use crate::server::queue::MessageQueue;
 use crate::server::AppState;
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
@@ -16,10 +17,11 @@ use warp_core_binary::jid::Jid;
 
 pub async fn spawn_messages_worker(app_state: Arc<AppState>, mut message_rx: mpsc::Receiver<()>) {
     const SESSION_WAIT_TTL_MINUTES: i64 = 10;
-    const POLL_FALLBACK_SECONDS: u64 = 30;
+    const POLL_FALLBACK_SECONDS: u64 = 5;
+    let queue = MessageQueue::new(app_state.clone());
 
     loop {
-        let processed_any = match drain_message_batch(&app_state, SESSION_WAIT_TTL_MINUTES).await {
+        let processed_any = match drain_message_batch(&app_state, &queue, SESSION_WAIT_TTL_MINUTES).await {
             Ok(processed_any) => processed_any,
             Err(err) => {
                 log::error!("Error processing queued messages: {}", err);
@@ -60,6 +62,7 @@ fn should_fail_missing_session(created_at: Option<DateTime<Utc>>, ttl_minutes: i
 
 async fn drain_message_batch(
     app_state: &Arc<AppState>,
+    queue: &MessageQueue,
     session_wait_ttl_minutes: i64,
 ) -> anyhow::Result<bool> {
     let sessions: Vec<String> = app_state
@@ -72,48 +75,25 @@ async fn drain_message_batch(
         return Ok(false);
     }
 
-    let mut sql = String::from(
-        "WITH claimed AS ( \
-            SELECT id \
-            FROM api_messages \
-            WHERE status = 'queued' AND session IN (",
-    );
-    for (idx, _) in sessions.iter().enumerate() {
-        if idx > 0 {
-            sql.push_str(", ");
-        }
-        sql.push_str(&format!("${}", idx + 1));
-    }
-    sql.push_str(
-        ") \
-            ORDER BY created_at \
-            LIMIT 50 \
-            FOR UPDATE SKIP LOCKED \
-        ), updated AS ( \
-            UPDATE api_messages \
-            SET status = 'processing' \
-            FROM claimed \
-            WHERE api_messages.id = claimed.id \
-            RETURNING api_messages.id, api_messages.session, api_messages.chat_id, \
-                     api_messages.message_type, api_messages.payload, api_messages.created_at \
-        ) \
-        SELECT row_to_json(updated)::jsonb as value FROM updated",
-    );
+    let jobs = queue.claim_for_sessions(sessions, 50).await?;
 
-    let binds = sessions.into_iter().map(ApiBind::Text).collect();
-
-    let rows = app_state.api_store.query_json(&sql, binds).await?;
-
-    if rows.is_empty() {
+    if jobs.is_empty() {
         return Ok(false);
     }
 
     let mut by_session: HashMap<String, Vec<Value>> = HashMap::new();
-    for row in rows {
-        let Some(session) = row.get("session").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        by_session.entry(session.to_string()).or_default().push(row);
+    for job in jobs {
+        by_session
+            .entry(job.session.clone())
+            .or_default()
+            .push(serde_json::json!({
+                "id": job.id.to_string(),
+                "session": job.session,
+                "chat_id": job.chat_id,
+                "message_type": job.message_type,
+                "payload": job.payload,
+                "created_at": job.created_at.map(|d| d.to_rfc3339()),
+            }));
     }
 
     let mut join_set = tokio::task::JoinSet::new();

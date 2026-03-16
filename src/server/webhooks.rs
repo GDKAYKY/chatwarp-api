@@ -1,23 +1,27 @@
 use crate::api_store::ApiBind;
 use crate::models::webhook_model::WebhookConfig;
+use crate::server::queue::{Queue, WebhookJob, WebhookQueue};
 use crate::server::AppState;
 use chatwarp_api_ureq_http_client::UreqHttpClient;
 use chrono::Utc;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 use warp_core::net::{HttpClient, HttpRequest};
 
 pub async fn enqueue(state: &AppState, session: Option<&str>, event: &str, data: Value) {
+    debug!(session = ?session, event = %event, "Enfileirando webhook para processamento");
     let payload = json!({
         "event": event,
         "instance": session.unwrap_or(""),
         "data": data
     });
 
+    // Mantém compatibilidade com o fluxo atual de inserção.
     let _ = state
         .api_store
         .execute(
@@ -34,8 +38,9 @@ pub async fn enqueue(state: &AppState, session: Option<&str>, event: &str, data:
 pub fn spawn_worker(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let client = UreqHttpClient::new();
+        let queue = WebhookQueue::new(state.clone());
         loop {
-            if let Err(err) = process_outbox(&state, &client).await {
+            if let Err(err) = process_outbox(&state, &queue, &client).await {
                 log::warn!("webhook worker error: {err}");
             }
             sleep(Duration::from_secs(5)).await;
@@ -43,49 +48,38 @@ pub fn spawn_worker(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
     })
 }
 
-async fn process_outbox(state: &AppState, client: &UreqHttpClient) -> anyhow::Result<()> {
-    let rows = state
-        .api_store
-        .query_json(
-            "SELECT row_to_json(t)::jsonb as value FROM ( \
-                SELECT id, session, event, payload, attempts \
-                FROM webhook_outbox \
-                WHERE status = 'pending' AND next_attempt_at <= now() \
-                ORDER BY created_at \
-                LIMIT 25 \
-            ) t",
-            vec![],
-        )
-        .await?;
+async fn process_outbox(
+    state: &AppState,
+    queue: &WebhookQueue,
+    client: &UreqHttpClient,
+) -> anyhow::Result<()> {
+    let jobs = queue.claim_batch(25).await?;
 
-    for row in rows {
-        let id = row
-            .get("id")
-            .and_then(|v| v.as_str())
-            .and_then(|s| Uuid::parse_str(s).ok());
-        let event = row.get("event").and_then(|v| v.as_str()).unwrap_or("");
-        let session = row.get("session").and_then(|v| v.as_str());
-        let payload = row.get("payload").cloned().unwrap_or(Value::Null);
-        let attempts = row.get("attempts").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-
-        let Some(id) = id else { continue };
+    for job in jobs {
+        let WebhookJob {
+            id,
+            session,
+            event,
+            payload,
+            attempts,
+        } = job;
 
         let mut targets = Vec::new();
 
-        if let Some(sess) = session {
+        if let Some(sess) = session.as_deref() {
             if let Some(cfg) = load_instance_webhook(state, sess).await? {
-                if cfg.enabled && event_allowed(&cfg.events, event) {
+                if cfg.enabled && event_allowed(&cfg.events, &event) {
                     targets.push(cfg);
                 }
             }
         }
 
-        if let Some(cfg) = load_global_webhook(state, event).await {
+        if let Some(cfg) = load_global_webhook(state, &event).await {
             targets.push(cfg);
         }
 
         if targets.is_empty() {
-            let _ = mark_sent(state, id).await;
+            let _ = queue.mark_sent(id).await;
             continue;
         }
 
@@ -94,13 +88,17 @@ async fn process_outbox(state: &AppState, client: &UreqHttpClient) -> anyhow::Re
 
         for target in targets {
             let url = if target.by_events {
-                format!("{}/{}", target.url.trim_end_matches('/'), event_path(event))
+                format!(
+                    "{}/{}",
+                    target.url.trim_end_matches('/'),
+                    event_path(&event)
+                )
             } else {
                 target.url.clone()
             };
 
             let enriched = enrich_payload(&payload, &url, target.base64);
-            let mut req = HttpRequest::post(url)
+            let mut req = HttpRequest::post(&url)
                 .with_header("Content-Type", "application/json")
                 .with_body(serde_json::to_vec(&enriched)?);
 
@@ -108,23 +106,30 @@ async fn process_outbox(state: &AppState, client: &UreqHttpClient) -> anyhow::Re
                 req = req.with_header(k, v);
             }
 
+            debug!(url = %url, event = %event, "Enviando requisição de webhook");
             match client.execute(req).await {
-                Ok(resp) if (200..300).contains(&resp.status_code) => {}
+                Ok(resp) if (200..300).contains(&resp.status_code) => {
+                    debug!(url = %url, event = %event, status = %resp.status_code, "Webhook enviado com sucesso");
+                }
                 Ok(resp) => {
                     all_ok = false;
+                    warn!(url = %url, event = %event, status = %resp.status_code, "Falha no envio do webhook (status não-2xx)");
                     last_error = Some(format!("http {}", resp.status_code));
                 }
                 Err(err) => {
                     all_ok = false;
+                    error!(url = %url, event = %event, error = %err, "Erro ao enviar webhook");
                     last_error = Some(err.to_string());
                 }
             }
         }
 
         if all_ok {
-            let _ = mark_sent(state, id).await;
+            let _ = queue.mark_sent(id).await;
         } else {
-            let _ = mark_retry(state, id, attempts + 1, last_error.unwrap_or_default()).await;
+            let _ = queue
+                .mark_retry(id, attempts + 1, last_error.unwrap_or_default())
+                .await;
         }
     }
 

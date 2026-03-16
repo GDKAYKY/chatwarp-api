@@ -4,11 +4,13 @@ use crate::server::AppState;
 use axum::{Json, extract::{Path, State}, http::StatusCode, response::IntoResponse};
 use serde_json::json;
 use std::sync::Arc;
+use tracing::info;
 
 pub async fn list_chats(
     State(state): State<Arc<AppState>>,
     Path(session): Path<String>,
 ) -> impl IntoResponse {
+    info!(session = %session, "Listando conversas");
     let session_name = session.clone();
     let rows = state
         .api_store
@@ -85,6 +87,7 @@ pub async fn read_messages(
     State(state): State<Arc<AppState>>,
     Path((session, chat_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    info!(session = %session, chat_id = %chat_id, "Marcando mensagens como lidas");
     let result = state
         .api_store
         .execute(

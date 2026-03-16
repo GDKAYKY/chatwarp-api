@@ -4,6 +4,7 @@ use crate::server::webhooks;
 use axum::{Json, extract::{Path, State}, http::StatusCode, response::IntoResponse};
 use serde_json::{Value, json};
 use std::sync::Arc;
+use tracing::{error, info};
 
 pub async fn create_session(
     State(state): State<Arc<AppState>>,
@@ -15,6 +16,8 @@ pub async fn create_session(
         .filter(|s| !s.is_empty())
         .unwrap_or("default")
         .to_string();
+
+    info!(session = %session, "Solicitação para criar/atualizar sessão recebida");
 
     let webhook = body.get("webhook").cloned().unwrap_or(Value::Null);
     let webhook_enabled = webhook
@@ -70,11 +73,14 @@ pub async fn create_session(
         .await;
 
     if let Err(err) = result {
+        error!(session = %session, error = %err, "Falha ao salvar sessão no banco de dados");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "db_error", "details": err.to_string()})),
         );
     }
+
+    info!(session = %session, "Sessão salva com sucesso no banco de dados");
 
     state
         .sessions_runtime
@@ -170,6 +176,7 @@ pub async fn start_session(
     State(state): State<Arc<AppState>>,
     Path(session): Path<String>,
 ) -> impl IntoResponse {
+    info!(session = %session, "Solicitação para iniciar sessão recebida");
     let result = state
         .api_store
         .execute(
@@ -207,6 +214,7 @@ pub async fn stop_session(
     State(state): State<Arc<AppState>>,
     Path(session): Path<String>,
 ) -> impl IntoResponse {
+    info!(session = %session, "Solicitação para parar sessão recebida");
     let result = state
         .api_store
         .execute(
@@ -244,6 +252,7 @@ pub async fn delete_session(
     State(state): State<Arc<AppState>>,
     Path(session): Path<String>,
 ) -> impl IntoResponse {
+    info!(session = %session, "Solicitação para deletar sessão recebida");
     let result = state
         .api_store
         .execute(

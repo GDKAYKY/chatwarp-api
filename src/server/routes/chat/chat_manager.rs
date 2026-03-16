@@ -5,6 +5,8 @@ use crate::server::webhooks;
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde_json::{Value, json};
 use std::sync::Arc;
+use std::time::Duration;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 async fn insert_message(
@@ -15,6 +17,12 @@ async fn insert_message(
     payload: Value,
     status: &str,
 ) -> anyhow::Result<Value> {
+    debug!(
+        session = %session,
+        chat_id = ?chat_id,
+        message_type = %message_type,
+        "Inserindo mensagem no banco de dados"
+    );
     let rows = state
         .api_store
         .query_json(
@@ -72,6 +80,15 @@ pub async fn send_message(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> axum::response::Response {
+    let session = session_from_body(&body);
+    let chat_id = chat_id_from_body(&body);
+
+    info!(
+        session = ?session,
+        chat_id = ?chat_id,
+        "Request to send message received"
+    );
+
     let mut body = body;
     let reply_message_id = body
         .get("reply")
@@ -264,6 +281,13 @@ async fn send_message_type(
     let session = session_from_body(&body);
     let chat_id = chat_id_from_body(&body);
 
+    info!(
+        session = %session,
+        chat_id = ?chat_id,
+        message_type = %message_type,
+        "Requisição para enviar mensagem de tipo específico recebida"
+    );
+
     match insert_message(
         &state,
         &session,
@@ -275,7 +299,19 @@ async fn send_message_type(
     .await
     {
         Ok(message) => {
-            let _ = state.message_notify.try_send(());
+            if let Err(err) = state.message_notify.try_send(()) {
+                let tx = state.message_notify.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::time::timeout(Duration::from_secs(1), tx.send(())).await;
+                });
+                warn!(error = ?err, "message_notify channel full; scheduled async notify");
+            }
+
+            info!(
+                session = %session,
+                message_id = ?message.get("id"),
+                "Mensagem inserida e enfileirada para entrega"
+            );
 
             let state_clone = state.clone();
             let session_clone = session.clone();
@@ -302,10 +338,17 @@ async fn send_message_type(
 
             (StatusCode::OK, Json(message))
         }
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "db_error", "details": err.to_string()})),
-        ),
+        Err(err) => {
+            error!(
+                session = %session,
+                error = %err,
+                "Falha ao inserir mensagem no banco de dados"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "db_error", "details": err.to_string()})),
+            )
+        }
     }
 }
 

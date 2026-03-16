@@ -20,6 +20,7 @@ pub mod handlers;
 pub mod messages_worker;
 pub mod routes;
 pub mod webhooks;
+pub mod queue;
 
 pub struct AppState {
     pub instances: DashMap<String, InstanceState>,
