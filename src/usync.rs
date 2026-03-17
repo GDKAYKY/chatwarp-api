@@ -1,12 +1,13 @@
 use crate::client::Client;
 use crate::utils::jid_utils::server_jid;
 use log::{debug, warn};
+use std::time::{Duration, Instant};
 use std::collections::HashSet;
 use warp_core_binary::jid::Jid;
 use warp_core_binary::node::NodeContent;
 
 impl Client {
-    pub(crate) async fn get_user_devices(&self, jids: &[Jid]) -> Result<Vec<Jid>, anyhow::Error> {
+    pub async fn get_user_devices(&self, jids: &[Jid]) -> Result<Vec<Jid>, anyhow::Error> {
         debug!("get_user_devices: Using normal mode for {jids:?}");
 
         let mut jids_to_fetch: HashSet<Jid> = HashSet::new();
@@ -29,6 +30,7 @@ impl Client {
                 jids_to_fetch.len()
             );
 
+            let fetch_start = Instant::now();
             let sid = self.generate_request_id();
             let jids_vec: Vec<Jid> = jids_to_fetch.into_iter().collect();
             let usync_node = warp_core::usync::build_get_user_devices_query(&jids_vec, sid.as_str());
@@ -41,6 +43,14 @@ impl Client {
             let resp_node = self.send_iq(iq).await?;
             let user_device_lists =
                 warp_core::usync::parse_get_user_devices_response_with_phash(&resp_node)?;
+            let fetch_elapsed = fetch_start.elapsed();
+            if fetch_elapsed > Duration::from_secs(1) {
+                log::info!(
+                    "get_user_devices: network fetch for {} users took {} ms",
+                    jids_vec.len(),
+                    fetch_elapsed.as_millis()
+                );
+            }
 
             // Extract and persist LID mappings from the response
             let lid_mappings = warp_core::usync::parse_lid_mappings_from_response(&resp_node);

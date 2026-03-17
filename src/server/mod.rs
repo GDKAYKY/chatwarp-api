@@ -15,6 +15,8 @@ use qrcode::QrCode;
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, sync::Arc};
 use tokio::sync::{RwLock, mpsc};
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 pub mod handlers;
 pub mod messages_worker;
@@ -147,11 +149,17 @@ pub fn create_router(state: Arc<AppState>) -> Router<()> {
         )
         .with_state(state.clone());
 
-    if state.api_password_hash.is_some() {
+    let router = if state.api_password_hash.is_some() {
         router.layer(middleware::from_fn_with_state(state, auth_middleware))
     } else {
         router
-    }
+    };
+
+    router.layer(
+        TraceLayer::new_for_http()
+            .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+            .on_response(DefaultOnResponse::new().level(Level::INFO)),
+    )
 }
 
 async fn auth_middleware(

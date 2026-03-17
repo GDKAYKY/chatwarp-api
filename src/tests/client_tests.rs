@@ -465,12 +465,12 @@
             .offline_sync_completed
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        // This should return immediately (not wait 10 seconds)
+        // This should return immediately (not wait for offline sync)
         let start = std::time::Instant::now();
         client.wait_for_offline_delivery_end().await;
         let elapsed = start.elapsed();
 
-        // Should complete in < 100ms (not 10 second timeout)
+        // Should complete in < 100ms (not the offline sync wait timeout)
         assert!(
             elapsed.as_millis() < 100,
             "wait_for_offline_delivery_end should return immediately when flag is set, took {:?}",
@@ -481,7 +481,7 @@
     }
 
     /// Test that wait_for_offline_delivery_end times out when the flag is NOT set.
-    /// This verifies the 10-second timeout is working.
+    /// This verifies the offline sync wait timeout is working.
     #[tokio::test]
     async fn test_wait_for_offline_delivery_end_times_out_when_flag_not_set() {
         let backend = Arc::new(

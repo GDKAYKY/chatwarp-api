@@ -251,6 +251,23 @@ fn main() {
                             let is_from_me = info.source.is_from_me;
                             let text_content = msg.text_content().unwrap_or_default();
 
+                            // Speculatively pre-warm the E2E session for this DM sender.
+                            // Cost on hot path: one moka cache lookup (~ns). Cost on cold path:
+                            // background prekey fetch that makes the *reply* instant.
+                            if !is_from_me && !info.source.is_group {
+                                let warm_client = client.clone();
+                                let sender_jid_for_warm = info.source.sender.clone();
+                                tokio::spawn(async move {
+                                    let jid = sender_jid_for_warm.to_non_ad();
+                                    if let Ok(devices) = warm_client
+                                        .get_user_devices(std::slice::from_ref(&jid))
+                                        .await
+                                    {
+                                        let _ = warm_client.ensure_e2e_sessions(devices).await;
+                                    }
+                                });
+                            }
+
                             let base64_enabled = match chatwarp_api::server::webhooks::load_instance_webhook(
                                 &state,
                                 &instance_name,
@@ -610,6 +627,12 @@ fn main() {
                                 "CONNECTION_UPDATE",
                                 json!({ "action": "update", "state": "open" })
                             ).await;
+                            // Pre-warm E2E sessions for recent DM chats in the background.
+                            // This eliminates the ~20-30s first-message latency for known contacts.
+                            tokio::spawn(chatwarp_api::server::messages_worker::warm_sessions(
+                                state.clone(),
+                                instance_name.clone(),
+                            ));
                         }
                         Event::Receipt(receipt) => {
                             info!(message_ids = ?receipt.message_ids, receipt_type = ?receipt.r#type, "Received receipt");

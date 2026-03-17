@@ -100,8 +100,8 @@ pub async fn send_message(
         let quoted = body.get("quoted").and_then(|v| v.as_object());
         let quoted_message_id = reply_message_id.or_else(|| {
             quoted
-            .and_then(|q| q.get("messageId").or_else(|| q.get("message_id")))
-            .and_then(|v| v.as_str())
+                .and_then(|q| q.get("messageId").or_else(|| q.get("message_id")))
+                .and_then(|v| v.as_str())
         });
 
         if quoted_message_id.is_none() {
@@ -277,7 +277,7 @@ async fn send_message_type(
     body: Value,
     message_type: &str,
     send_event: bool,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let session = session_from_body(&body);
     let chat_id = chat_id_from_body(&body);
 
@@ -336,7 +336,7 @@ async fn send_message_type(
                 }
             });
 
-            (StatusCode::OK, Json(message))
+            (StatusCode::OK, Json(message)).into_response()
         }
         Err(err) => {
             error!(
@@ -348,6 +348,7 @@ async fn send_message_type(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "db_error", "details": err.to_string()})),
             )
+                .into_response()
         }
     }
 }

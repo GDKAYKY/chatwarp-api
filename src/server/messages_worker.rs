@@ -1,35 +1,49 @@
 use crate::api_store::ApiBind;
 use crate::client::Client;
 use crate::http::HttpRequest;
-use crate::server::queue::MessageQueue;
 use crate::server::AppState;
+use crate::server::queue::MessageQueue;
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::{Mutex, Semaphore, mpsc};
 use tokio::time::{Duration, sleep};
-use tokio::sync::mpsc;
 use uuid::Uuid;
 use waproto::whatsapp as wa;
 use warp_core::download::MediaType;
 use warp_core_binary::jid::Jid;
 
+/// Maximum concurrent in-flight sends across all chats.
+const MAX_CONCURRENT_SENDS: usize = 32;
+/// Fallback poll interval when the notify channel is idle.
+const POLL_FALLBACK_SECONDS: u64 = 1;
+/// TTL before a queued message is failed if its session never connected.
+const SESSION_WAIT_TTL_MINUTES: i64 = 10;
+
+/// Per-chat key: "<session>:<chat_id>"
+type ChatKey = String;
+
 pub async fn spawn_messages_worker(app_state: Arc<AppState>, mut message_rx: mpsc::Receiver<()>) {
-    const SESSION_WAIT_TTL_MINUTES: i64 = 10;
-    const POLL_FALLBACK_SECONDS: u64 = 5;
     let queue = MessageQueue::new(app_state.clone());
+    // Per-chat locks: serialise sends *within* a chat, parallelise *across* chats.
+    let chat_locks: Arc<DashMap<ChatKey, Arc<Mutex<()>>>> = Arc::new(DashMap::new());
+    // Global semaphore caps total in-flight sends to avoid socket saturation.
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_SENDS));
 
     loop {
-        let processed_any = match drain_message_batch(&app_state, &queue, SESSION_WAIT_TTL_MINUTES).await {
-            Ok(processed_any) => processed_any,
-            Err(err) => {
-                log::error!("Error processing queued messages: {}", err);
-                sleep(Duration::from_secs(5)).await;
-                false
-            }
-        };
+        let processed_any =
+            match drain_message_batch(&app_state, &queue, &chat_locks, &semaphore).await {
+                Ok(v) => v,
+                Err(err) => {
+                    log::error!("Error processing queued messages: {}", err);
+                    sleep(Duration::from_secs(5)).await;
+                    false
+                }
+            };
 
+        // If we dispatched jobs, immediately try to drain more.
         if processed_any {
             continue;
         }
@@ -38,6 +52,82 @@ pub async fn spawn_messages_worker(app_state: Arc<AppState>, mut message_rx: mps
             _ = message_rx.recv() => {}
             _ = sleep(Duration::from_secs(POLL_FALLBACK_SECONDS)) => {}
         }
+    }
+}
+
+/// Pre-warm E2E sessions for the most recent DM chats of `session`.
+/// Call this right after a client connects to eliminate first-message cold-start latency.
+pub async fn warm_sessions(app_state: Arc<AppState>, session: String) {
+    let Some(client_ref) = app_state.clients.get(&session) else {
+        return;
+    };
+    let client = client_ref.value().clone();
+    drop(client_ref);
+
+    let rows = app_state
+        .api_store
+        .query_json(
+            "SELECT id FROM api_chats \
+             WHERE session = $1 AND id NOT LIKE '%@g.us' \
+             ORDER BY last_message_at DESC NULLS LAST \
+             LIMIT 50",
+            vec![ApiBind::Text(session.clone())],
+        )
+        .await;
+
+    let jids: Vec<Jid> = match rows {
+        Ok(rows) => rows
+            .iter()
+            .filter_map(|r| r.get("id").and_then(|v| v.as_str()))
+            .filter_map(|s| s.parse::<Jid>().ok())
+            .collect(),
+        Err(e) => {
+            log::warn!("[warm_sessions] failed to query chats: {}", e);
+            return;
+        }
+    };
+
+    if jids.is_empty() {
+        return;
+    }
+
+    // Also include recent contacts not yet in api_chats (e.g. never-messaged contacts).
+    let contact_jids: Vec<Jid> = match app_state
+        .api_store
+        .query_json(
+            "SELECT id FROM api_contacts \
+             WHERE session = $1 AND id NOT LIKE '%@g.us' \
+             ORDER BY updated_at DESC NULLS LAST \
+             LIMIT 50",
+            vec![ApiBind::Text(session.clone())],
+        )
+        .await
+    {
+        Ok(rows) => rows
+            .iter()
+            .filter_map(|r| r.get("id").and_then(|v| v.as_str()))
+            .filter_map(|s| s.parse::<Jid>().ok())
+            .filter(|j| !jids.contains(j))
+            .collect(),
+        Err(_) => vec![],
+    };
+
+    let all_jids: Vec<Jid> = jids.into_iter().chain(contact_jids).collect();
+
+    log::info!(
+        "[warm_sessions] pre-warming {} sessions for {}",
+        all_jids.len(),
+        session
+    );
+    match client.get_user_devices(&all_jids).await {
+        Ok(devices) => {
+            if let Err(e) = client.ensure_e2e_sessions(devices).await {
+                log::warn!("[warm_sessions] ensure_e2e_sessions error: {}", e);
+            } else {
+                log::info!("[warm_sessions] done for {}", session);
+            }
+        }
+        Err(e) => log::warn!("[warm_sessions] get_user_devices error: {}", e),
     }
 }
 
@@ -63,7 +153,8 @@ fn should_fail_missing_session(created_at: Option<DateTime<Utc>>, ttl_minutes: i
 async fn drain_message_batch(
     app_state: &Arc<AppState>,
     queue: &MessageQueue,
-    session_wait_ttl_minutes: i64,
+    chat_locks: &Arc<DashMap<ChatKey, Arc<Mutex<()>>>>,
+    semaphore: &Arc<Semaphore>,
 ) -> anyhow::Result<bool> {
     let sessions: Vec<String> = app_state
         .clients
@@ -76,41 +167,42 @@ async fn drain_message_batch(
     }
 
     let jobs = queue.claim_for_sessions(sessions, 50).await?;
-
     if jobs.is_empty() {
         return Ok(false);
     }
 
-    let mut by_session: HashMap<String, Vec<Value>> = HashMap::new();
     for job in jobs {
-        by_session
-            .entry(job.session.clone())
-            .or_default()
-            .push(serde_json::json!({
-                "id": job.id.to_string(),
-                "session": job.session,
-                "chat_id": job.chat_id,
-                "message_type": job.message_type,
-                "payload": job.payload,
-                "created_at": job.created_at.map(|d| d.to_rfc3339()),
-            }));
-    }
+        let chat_key = format!("{}:{}", job.session, job.chat_id);
+        // Get-or-create a per-chat ordering mutex.
+        let chat_lock = chat_locks
+            .entry(chat_key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
 
-    let mut join_set = tokio::task::JoinSet::new();
-    for (session, rows) in by_session {
         let state = app_state.clone();
-        join_set.spawn(async move {
-            for row in rows {
-                process_single_message(&state, &session, row, session_wait_ttl_minutes).await;
-            }
+        let sem = semaphore.clone();
+        let session = job.session.clone();
+        let row = serde_json::json!({
+            "id": job.id.to_string(),
+            "session": job.session,
+            "chat_id": job.chat_id,
+            "message_type": job.message_type,
+            "payload": job.payload,
+            "created_at": job.created_at.map(|d| d.to_rfc3339()),
+        });
+
+        tokio::spawn(async move {
+            // Acquire global semaphore first (back-pressure).
+            let _permit = sem.acquire().await;
+            // Then serialise within this chat (preserve message ordering).
+            let _chat_guard = chat_lock.lock().await;
+            process_single_message(&state, &session, row, SESSION_WAIT_TTL_MINUTES).await;
         });
     }
 
-    while let Some(result) = join_set.join_next().await {
-        if let Err(err) = result {
-            log::error!("Message worker task failed: {}", err);
-        }
-    }
+    // Trim idle per-chat locks to prevent unbounded DashMap growth.
+    // A lock that can be instantly acquired has no waiters — safe to remove.
+    chat_locks.retain(|_, v| v.try_lock().is_err());
 
     Ok(true)
 }
@@ -175,30 +267,13 @@ async fn process_single_message(
     }
 }
 
-async fn build_message(
+pub(crate) async fn build_message(
     client: &Client,
     message_type: &str,
     payload: &Value,
 ) -> Option<wa::Message> {
     match message_type {
-        "text" => {
-            let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            if let Some(context_info) = build_reply_context_info(payload) {
-                Some(wa::Message {
-                    extended_text_message: Some(Box::new(wa::message::ExtendedTextMessage {
-                        text: Some(text.to_string()),
-                        context_info: Some(context_info),
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                })
-            } else {
-                Some(wa::Message {
-                    conversation: Some(text.to_string()),
-                    ..Default::default()
-                })
-            }
-        }
+        "text" => build_text_message(payload),
         "image" => match build_image_message(client, payload).await {
             Ok(msg) => Some(msg),
             Err(err) => {
@@ -248,7 +323,29 @@ async fn build_message(
     }
 }
 
-fn build_reply_context_info(payload: &Value) -> Option<Box<wa::ContextInfo>> {
+pub(crate) fn build_text_message(payload: &Value) -> Option<wa::Message> {
+    let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
+    if text.trim().is_empty() {
+        return None;
+    }
+    if let Some(context_info) = build_reply_context_info(payload) {
+        Some(wa::Message {
+            extended_text_message: Some(Box::new(wa::message::ExtendedTextMessage {
+                text: Some(text.to_string()),
+                context_info: Some(context_info),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
+    } else {
+        Some(wa::Message {
+            conversation: Some(text.to_string()),
+            ..Default::default()
+        })
+    }
+}
+
+pub(crate) fn build_reply_context_info(payload: &Value) -> Option<Box<wa::ContextInfo>> {
     let reply_message_id = payload
         .get("reply")
         .and_then(|v| v.as_str())

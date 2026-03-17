@@ -112,7 +112,7 @@ pub async fn message_encrypt(
     let message = if let Some(items) = session_state.unacknowledged_pre_key_message_items()? {
         let local_registration_id = session_state.local_registration_id();
 
-        log::info!(
+        log::trace!(
             "Building PreKeyWhisperMessage for: {} with preKeyId: {}",
             remote_address,
             items
@@ -755,7 +755,7 @@ fn get_or_create_chain_key<R: Rng + CryptoRng>(
         return Ok(chain);
     }
 
-    log::info!("{remote_address} creating new chains.");
+    log::trace!("{remote_address} creating new chains.");
 
     let root_key = state.root_key()?;
     let our_ephemeral = state.sender_ratchet_private_key()?;
@@ -803,7 +803,7 @@ fn get_or_create_message_key(
 
     if jump > MAX_FORWARD_JUMPS {
         if state.session_with_self()? {
-            log::info!(
+            log::trace!(
                 "{remote_address} Jumping ahead {jump} messages (index: {chain_index}, counter: {counter})"
             );
         } else {

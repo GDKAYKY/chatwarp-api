@@ -9,6 +9,7 @@
 //! - Batch prekey fetching and session establishment
 
 use anyhow::Result;
+use std::time::{Duration, Instant};
 use warp_core_binary::jid::Jid;
 
 use super::Client;
@@ -28,10 +29,17 @@ impl Client {
             return;
         }
 
-        // Wait with a reasonable timeout to avoid blocking forever
-        const TIMEOUT_SECS: u64 = 10;
+        // Wait with a short timeout to avoid blocking the send hot path.
+        // Configurable via CHATWARP_OFFLINE_SYNC_WAIT_SECS (0 disables waiting).
+        let timeout_secs = std::env::var("CHATWARP_OFFLINE_SYNC_WAIT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(1);
+        if timeout_secs == 0 {
+            return;
+        }
         let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(TIMEOUT_SECS),
+            std::time::Duration::from_secs(timeout_secs),
             self.offline_sync_notifier.notified(),
         )
         .await;
@@ -42,21 +50,21 @@ impl Client {
     /// - Waits for offline delivery to complete
     /// - Resolves phone-to-LID mappings
     /// - Batches prekey fetches to avoid overwhelming the server
-    pub(crate) async fn ensure_e2e_sessions(&self, device_jids: Vec<Jid>) -> Result<()> {
+    pub async fn ensure_e2e_sessions(&self, device_jids: Vec<Jid>) -> Result<()> {
         use warp_core::libsignal::store::SessionStore;
         use warp_core::types::jid::JidExt;
 
+        let start = Instant::now();
         if device_jids.is_empty() {
             return Ok(());
         }
 
-        // 1. Wait for offline sync (matches WhatsApp Web)
-        self.wait_for_offline_delivery_end().await;
-
-        // 2. Resolve LID mappings (matches WhatsApp Web)
+        // 1. Resolve LID mappings
         let resolved_jids = self.resolve_lid_mappings(&device_jids).await;
 
-        // 3. Filter to JIDs that need sessions (pre-allocate with upper bound)
+        // 2. Filter to JIDs that need sessions BEFORE waiting for offline sync.
+        //    Hot path (all sessions already exist after warm_sessions) returns here
+        //    without ever touching wait_for_offline_delivery_end.
         let device_store = self.persistence_manager.get_device_arc().await;
         let mut jids_needing_sessions = Vec::with_capacity(resolved_jids.len());
 
@@ -65,17 +73,9 @@ impl Client {
             for jid in resolved_jids {
                 let signal_addr = jid.to_protocol_address();
                 match device_guard.contains_session(&signal_addr).await {
-                    Ok(true) => {
-                        // Session exists, skip
-                    }
-                    Ok(false) => {
-                        // No session, need to establish one
-                        jids_needing_sessions.push(jid);
-                    }
-                    Err(e) => {
-                        // Storage error - log and skip this JID rather than treating as missing
-                        log::warn!("Failed to check session for {}: {}", jid, e);
-                    }
+                    Ok(true) => {}
+                    Ok(false) => jids_needing_sessions.push(jid),
+                    Err(e) => log::warn!("Failed to check session for {}: {}", jid, e),
                 }
             }
         }
@@ -84,9 +84,28 @@ impl Client {
             return Ok(());
         }
 
+        // 3. Only wait for offline sync if we actually need to establish new sessions.
+        //    This matches WhatsApp Web semantics while avoiding the 10s timeout on hot path.
+        let wait_start = Instant::now();
+        self.wait_for_offline_delivery_end().await;
+        let wait_elapsed = wait_start.elapsed();
+
         // 4. Fetch and establish sessions (with batching)
+        let fetch_start = Instant::now();
         for batch in jids_needing_sessions.chunks(SESSION_CHECK_BATCH_SIZE) {
             self.fetch_and_establish_sessions(batch).await?;
+        }
+        let fetch_elapsed = fetch_start.elapsed();
+
+        let total_elapsed = start.elapsed();
+        if total_elapsed > Duration::from_secs(1) {
+            log::info!(
+                "ensure_e2e_sessions: {} needed (wait {} ms, fetch {} ms, total {} ms)",
+                jids_needing_sessions.len(),
+                wait_elapsed.as_millis(),
+                fetch_elapsed.as_millis(),
+                total_elapsed.as_millis()
+            );
         }
 
         Ok(())
