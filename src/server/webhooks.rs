@@ -230,6 +230,16 @@ pub async fn load_instance_webhook(
     state: &AppState,
     session: &str,
 ) -> anyhow::Result<Option<WebhookConfig>> {
+    const CACHE_TTL: Duration = Duration::from_secs(30);
+
+    // Check in-memory cache first
+    if let Some(entry) = state.webhook_config_cache.get(session) {
+        let (ref cached, ref ts) = *entry;
+        if ts.elapsed() < CACHE_TTL {
+            return Ok(cached.clone());
+        }
+    }
+
     let rows = state
         .api_store
         .query_json(
@@ -243,6 +253,10 @@ pub async fn load_instance_webhook(
         .await?;
 
     let Some(row) = rows.into_iter().next() else {
+        state.webhook_config_cache.insert(
+            session.to_string(),
+            (None, std::time::Instant::now()),
+        );
         return Ok(None);
     };
 
@@ -284,17 +298,28 @@ pub async fn load_instance_webhook(
         });
 
     if url.is_empty() {
+        state.webhook_config_cache.insert(
+            session.to_string(),
+            (None, std::time::Instant::now()),
+        );
         return Ok(None);
     }
 
-    Ok(Some(WebhookConfig {
+    let config = WebhookConfig {
         enabled,
         url,
         by_events,
         base64,
         headers,
         events,
-    }))
+    };
+
+    state.webhook_config_cache.insert(
+        session.to_string(),
+        (Some(config.clone()), std::time::Instant::now()),
+    );
+
+    Ok(Some(config))
 }
 
 async fn load_global_webhook(state: &AppState, event: &str) -> Option<WebhookConfig> {

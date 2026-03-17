@@ -4,7 +4,6 @@ use crate::store::persistence_manager::PersistenceManager;
 use crate::store::traits::Backend;
 use crate::types::enc_handler::EncHandler;
 use crate::types::events::{Event, EventHandler};
-use crate::types::message::MessageInfo;
 use anyhow::Result;
 use log::{info, warn};
 use std::collections::HashMap;
@@ -14,34 +13,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task;
 use waproto::whatsapp as wa;
-
-pub struct MessageContext {
-    pub message: Box<wa::Message>,
-    pub info: MessageInfo,
-    pub client: Arc<Client>,
-}
-
-impl MessageContext {
-    pub async fn send_message(&self, message: wa::Message) -> Result<String, anyhow::Error> {
-        self.client
-            .send_message(self.info.source.chat.clone(), message)
-            .await
-    }
-
-    pub async fn edit_message(
-        &self,
-        original_message_id: String,
-        new_message: wa::Message,
-    ) -> Result<String, anyhow::Error> {
-        self.client
-            .edit_message(
-                self.info.source.chat.clone(),
-                original_message_id,
-                new_message,
-            )
-            .await
-    }
-}
 
 type EventHandlerCallback =
     Arc<dyn Fn(Event, Arc<Client>) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;

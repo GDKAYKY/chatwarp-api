@@ -1,6 +1,7 @@
 use base64::Engine as _;
 use chatwarp_api::api_store::{ApiStore, NoopApiStore};
-use chatwarp_api::bot::{Bot, MessageContext};
+use chatwarp_api::bot::Bot;
+use chatwarp_api::models::message_model::{IncomingMessageMetadata, MessageContext};
 use chatwarp_api::pair_code::PairCodeOptions;
 use chatwarp_api::upload::UploadResponse;
 use chatwarp_api_tokio_transport::TokioWebSocketTransportFactory;
@@ -166,6 +167,7 @@ fn main() {
             api_password_hash,
             session_ttl_seconds,
             message_notify: message_notify_tx,
+            webhook_config_cache: DashMap::new(),
         });
 
         // Initialize default instance
@@ -246,10 +248,11 @@ fn main() {
                                 client: client.clone(),
                             };
 
-                            let sender_jid = info.source.sender.to_string();
-                            let remote_jid = info.source.chat.to_string();
-                            let is_from_me = info.source.is_from_me;
-                            let text_content = msg.text_content().unwrap_or_default();
+                            let metadata = IncomingMessageMetadata::from_message(&msg, &info);
+                            let sender_jid = metadata.sender_jid.clone();
+                            let remote_jid = metadata.remote_jid.clone();
+                            let is_from_me = metadata.is_from_me;
+                            let text_content = metadata.text_content.clone();
 
                             // Speculatively pre-warm the E2E session for this DM sender.
                             // Cost on hot path: one moka cache lookup (~ns). Cost on cold path:
@@ -268,247 +271,265 @@ fn main() {
                                 });
                             }
 
-                            let base64_enabled = match chatwarp_api::server::webhooks::load_instance_webhook(
-                                &state,
-                                &instance_name,
-                            )
-                            .await
+                            // Fire-and-forget: webhook processing runs in background so the
+                            // message handler can respond to the user immediately.
                             {
-                                Ok(Some(cfg)) if cfg.enabled && cfg.base64 => true,
-                                _ => {
-                                    let global_enabled = std::env::var("WEBHOOK_GLOBAL_ENABLED")
-                                        .ok()
-                                        .map(|v| v == "true" || v == "1")
-                                        .unwrap_or(false);
-                                    let global_base64 = std::env::var("WEBHOOK_GLOBAL_WEBHOOK_BASE64")
-                                        .ok()
-                                        .map(|v| v == "true" || v == "1")
-                                        .unwrap_or(false);
-                                    global_enabled && global_base64
-                                }
-                            };
+                                let bg_state = Arc::clone(&state);
+                                let bg_instance = Arc::new(instance_name.clone());
+                                let bg_msg = Arc::new(msg.clone());
+                                let bg_client = Arc::clone(&client);
+                                let bg_text = Arc::new(text_content.clone());
+                                let bg_sender = Arc::new(sender_jid.clone());
+                                let bg_remote = Arc::new(remote_jid.clone());
+                                let bg_info = Arc::new(info.clone());
 
-                            let message_payload = if let Some(image) = msg.image_message.as_deref() {
-                                let mut message = serde_json::Map::new();
-                                message.insert("messageType".to_string(), json!("image"));
-
-                                if let Some(url) = &image.url {
-                                    message.insert("url".to_string(), json!(url));
-                                }
-                                if let Some(mimetype) = &image.mimetype {
-                                    message.insert("mimetype".to_string(), json!(mimetype));
-                                }
-                                if let Some(caption) = &image.caption {
-                                    message.insert("text".to_string(), json!(caption));
-                                }
-                                if let Some(file_length) = image.file_length {
-                                    message.insert("fileLength".to_string(), json!(file_length));
-                                }
-
-                                if base64_enabled {
-                                    match ctx.client.download(image).await {
-                                        Ok(bytes) => {
-                                            let mime = image
-                                                .mimetype
-                                                .as_deref()
-                                                .unwrap_or("application/octet-stream");
-                                            let encoded = base64::engine::general_purpose::STANDARD
-                                                .encode(bytes);
-                                            let data_url = format!("data:{};base64,{}", mime, encoded);
-                                            message.insert("base64".to_string(), json!(data_url));
+                                tokio::spawn(async move {
+                                    let base64_enabled = match chatwarp_api::server::webhooks::load_instance_webhook(
+                                        &bg_state,
+                                        bg_instance.as_str(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(Some(cfg)) if cfg.enabled && cfg.base64 => true,
+                                        _ => {
+                                            let global_enabled = std::env::var("WEBHOOK_GLOBAL_ENABLED")
+                                                .ok()
+                                                .map(|v| v == "true" || v == "1")
+                                                .unwrap_or(false);
+                                            let global_base64 = std::env::var("WEBHOOK_GLOBAL_WEBHOOK_BASE64")
+                                                .ok()
+                                                .map(|v| v == "true" || v == "1")
+                                                .unwrap_or(false);
+                                            global_enabled && global_base64
                                         }
-                                        Err(e) => {
-                                            error!(error = %e, "Failed to download image for webhook base64");
+                                    };
+
+                                    let message_payload = if let Some(image) = bg_msg.as_ref().image_message.as_deref() {
+                                        let mut message = serde_json::Map::new();
+                                        message.insert("messageType".to_string(), json!("image"));
+
+                                        if let Some(url) = &image.url {
+                                            message.insert("url".to_string(), json!(url));
                                         }
+                                        if let Some(mimetype) = &image.mimetype {
+                                            message.insert("mimetype".to_string(), json!(mimetype));
+                                        }
+                                        if let Some(caption) = &image.caption {
+                                            message.insert("text".to_string(), json!(caption));
+                                        }
+                                        if let Some(file_length) = image.file_length {
+                                            message.insert("fileLength".to_string(), json!(file_length));
+                                        }
+
+                                        if base64_enabled {
+                                            match bg_client.download(image).await {
+                                                Ok(bytes) => {
+                                                    let mime = image
+                                                        .mimetype
+                                                        .as_deref()
+                                                        .unwrap_or("application/octet-stream");
+                                                    let encoded = base64::engine::general_purpose::STANDARD
+                                                        .encode(bytes);
+                                                    let data_url = format!("data:{};base64,{}", mime, encoded);
+                                                    message.insert("base64".to_string(), json!(data_url));
+                                                }
+                                                Err(e) => {
+                                                    error!(error = %e, "Failed to download image for webhook base64");
+                                                }
+                                            }
+                                        }
+
+                                        serde_json::Value::Object(message)
+                                    } else if let Some(video) = bg_msg.as_ref().video_message.as_deref() {
+                                        let mut message = serde_json::Map::new();
+                                        message.insert("messageType".to_string(), json!("video"));
+
+                                        if let Some(url) = &video.url {
+                                            message.insert("url".to_string(), json!(url));
+                                        }
+                                        if let Some(mimetype) = &video.mimetype {
+                                            message.insert("mimetype".to_string(), json!(mimetype));
+                                        }
+                                        if let Some(caption) = &video.caption {
+                                            message.insert("text".to_string(), json!(caption));
+                                        }
+                                        if let Some(file_length) = video.file_length {
+                                            message.insert("fileLength".to_string(), json!(file_length));
+                                        }
+
+                                        if base64_enabled {
+                                            match bg_client.download(video).await {
+                                                Ok(bytes) => {
+                                                    let mime = video
+                                                        .mimetype
+                                                        .as_deref()
+                                                        .unwrap_or("application/octet-stream");
+                                                    let encoded = base64::engine::general_purpose::STANDARD
+                                                        .encode(bytes);
+                                                    let data_url = format!("data:{};base64,{}", mime, encoded);
+                                                    message.insert("base64".to_string(), json!(data_url));
+                                                }
+                                                Err(e) => {
+                                                    error!(error = %e, "Failed to download video for webhook base64");
+                                                }
+                                            }
+                                        }
+
+                                        serde_json::Value::Object(message)
+                                    } else if let Some(audio) = bg_msg.as_ref().audio_message.as_deref() {
+                                        let mut message = serde_json::Map::new();
+                                        message.insert("messageType".to_string(), json!("voice"));
+
+                                        if let Some(url) = &audio.url {
+                                            message.insert("url".to_string(), json!(url));
+                                        }
+                                        if let Some(mimetype) = &audio.mimetype {
+                                            message.insert("mimetype".to_string(), json!(mimetype));
+                                        }
+                                        if let Some(file_length) = audio.file_length {
+                                            message.insert("fileLength".to_string(), json!(file_length));
+                                        }
+                                        if let Some(ptt) = audio.ptt {
+                                            message.insert("ptt".to_string(), json!(ptt));
+                                        }
+
+                                        if base64_enabled {
+                                            match bg_client.download(audio).await {
+                                                Ok(bytes) => {
+                                                    let mime = audio
+                                                        .mimetype
+                                                        .as_deref()
+                                                        .unwrap_or("application/octet-stream");
+                                                    let encoded = base64::engine::general_purpose::STANDARD
+                                                        .encode(bytes);
+                                                    let data_url = format!("data:{};base64,{}", mime, encoded);
+                                                    message.insert("base64".to_string(), json!(data_url));
+                                                }
+                                                Err(e) => {
+                                                    error!(error = %e, "Failed to download audio for webhook base64");
+                                                }
+                                            }
+                                        }
+
+                                        serde_json::Value::Object(message)
+                                    } else if let Some(doc) = bg_msg.as_ref().document_message.as_deref() {
+                                        let mut message = serde_json::Map::new();
+                                        message.insert("messageType".to_string(), json!("file"));
+
+                                        if let Some(url) = &doc.url {
+                                            message.insert("url".to_string(), json!(url));
+                                        }
+                                        if let Some(mimetype) = &doc.mimetype {
+                                            message.insert("mimetype".to_string(), json!(mimetype));
+                                        }
+                                        if let Some(caption) = &doc.caption {
+                                            message.insert("text".to_string(), json!(caption));
+                                        }
+                                        if let Some(file_name) = &doc.file_name {
+                                            message.insert("filename".to_string(), json!(file_name));
+                                        }
+                                        if let Some(file_length) = doc.file_length {
+                                            message.insert("fileLength".to_string(), json!(file_length));
+                                        }
+
+                                        if base64_enabled {
+                                            match bg_client.download(doc).await {
+                                                Ok(bytes) => {
+                                                    let mime = doc
+                                                        .mimetype
+                                                        .as_deref()
+                                                        .unwrap_or("application/octet-stream");
+                                                    let encoded = base64::engine::general_purpose::STANDARD
+                                                        .encode(bytes);
+                                                    let data_url = format!("data:{};base64,{}", mime, encoded);
+                                                    message.insert("base64".to_string(), json!(data_url));
+                                                }
+                                                Err(e) => {
+                                                    error!(error = %e, "Failed to download document for webhook base64");
+                                                }
+                                            }
+                                        }
+
+                                        serde_json::Value::Object(message)
+                                    } else if let Some(sticker) = bg_msg.as_ref().sticker_message.as_deref() {
+                                        let mut message = serde_json::Map::new();
+                                        message.insert("messageType".to_string(), json!("sticker"));
+
+                                        if let Some(url) = &sticker.url {
+                                            message.insert("url".to_string(), json!(url));
+                                        }
+                                        if let Some(mimetype) = &sticker.mimetype {
+                                            message.insert("mimetype".to_string(), json!(mimetype));
+                                        }
+                                        if let Some(file_length) = sticker.file_length {
+                                            message.insert("fileLength".to_string(), json!(file_length));
+                                        }
+                                        if let Some(is_animated) = sticker.is_animated {
+                                            message.insert("isAnimated".to_string(), json!(is_animated));
+                                        }
+
+                                        if base64_enabled {
+                                            match bg_client.download(sticker).await {
+                                                Ok(bytes) => {
+                                                    let mime = sticker
+                                                        .mimetype
+                                                        .as_deref()
+                                                        .unwrap_or("application/octet-stream");
+                                                    let encoded = base64::engine::general_purpose::STANDARD
+                                                        .encode(bytes);
+                                                    let data_url = format!("data:{};base64,{}", mime, encoded);
+                                                    message.insert("base64".to_string(), json!(data_url));
+                                                }
+                                                Err(e) => {
+                                                    error!(error = %e, "Failed to download sticker for webhook base64");
+                                                }
+                                            }
+                                        }
+
+                                        serde_json::Value::Object(message)
+                                    } else {
+                                        json!({
+                                            "messageType": "conversation",
+                                            "text": bg_text.as_str()
+                                        })
+                                    };
+
+                                    let mut message_item = serde_json::Map::new();
+                                    let mut key_item = serde_json::Map::new();
+                                    key_item.insert("remoteJid".to_string(), json!(bg_remote.as_str()));
+                                    key_item.insert("fromMe".to_string(), json!(is_from_me));
+                                    key_item.insert("MessageId".to_string(), json!(bg_info.id));
+                                    key_item.insert(
+                                        "participant".to_string(),
+                                        if is_from_me {
+                                            serde_json::Value::Null
+                                        } else {
+                                            json!(bg_sender.as_str())
+                                        },
+                                    );
+                                    if !bg_info.push_name.is_empty() {
+                                        key_item.insert(
+                                            "senderName".to_string(),
+                                            json!(bg_info.push_name.as_str()),
+                                        );
                                     }
-                                }
+                                    message_item.insert(
+                                        "key".to_string(),
+                                        serde_json::Value::Object(key_item),
+                                    );
+                                    message_item.insert("message".to_string(), message_payload);
 
-                                serde_json::Value::Object(message)
-                            } else if let Some(video) = msg.video_message.as_deref() {
-                                let mut message = serde_json::Map::new();
-                                message.insert("messageType".to_string(), json!("video"));
-
-                                if let Some(url) = &video.url {
-                                    message.insert("url".to_string(), json!(url));
-                                }
-                                if let Some(mimetype) = &video.mimetype {
-                                    message.insert("mimetype".to_string(), json!(mimetype));
-                                }
-                                if let Some(caption) = &video.caption {
-                                    message.insert("text".to_string(), json!(caption));
-                                }
-                                if let Some(file_length) = video.file_length {
-                                    message.insert("fileLength".to_string(), json!(file_length));
-                                }
-
-                                if base64_enabled {
-                                    match ctx.client.download(video).await {
-                                        Ok(bytes) => {
-                                            let mime = video
-                                                .mimetype
-                                                .as_deref()
-                                                .unwrap_or("application/octet-stream");
-                                            let encoded = base64::engine::general_purpose::STANDARD
-                                                .encode(bytes);
-                                            let data_url = format!("data:{};base64,{}", mime, encoded);
-                                            message.insert("base64".to_string(), json!(data_url));
-                                        }
-                                        Err(e) => {
-                                            error!(error = %e, "Failed to download video for webhook base64");
-                                        }
-                                    }
-                                }
-
-                                serde_json::Value::Object(message)
-                            } else if let Some(audio) = msg.audio_message.as_deref() {
-                                let mut message = serde_json::Map::new();
-                                message.insert("messageType".to_string(), json!("voice"));
-
-                                if let Some(url) = &audio.url {
-                                    message.insert("url".to_string(), json!(url));
-                                }
-                                if let Some(mimetype) = &audio.mimetype {
-                                    message.insert("mimetype".to_string(), json!(mimetype));
-                                }
-                                if let Some(file_length) = audio.file_length {
-                                    message.insert("fileLength".to_string(), json!(file_length));
-                                }
-                                if let Some(ptt) = audio.ptt {
-                                    message.insert("ptt".to_string(), json!(ptt));
-                                }
-
-                                if base64_enabled {
-                                    match ctx.client.download(audio).await {
-                                        Ok(bytes) => {
-                                            let mime = audio
-                                                .mimetype
-                                                .as_deref()
-                                                .unwrap_or("application/octet-stream");
-                                            let encoded = base64::engine::general_purpose::STANDARD
-                                                .encode(bytes);
-                                            let data_url = format!("data:{};base64,{}", mime, encoded);
-                                            message.insert("base64".to_string(), json!(data_url));
-                                        }
-                                        Err(e) => {
-                                            error!(error = %e, "Failed to download audio for webhook base64");
-                                        }
-                                    }
-                                }
-
-                                serde_json::Value::Object(message)
-                            } else if let Some(doc) = msg.document_message.as_deref() {
-                                let mut message = serde_json::Map::new();
-                                message.insert("messageType".to_string(), json!("file"));
-
-                                if let Some(url) = &doc.url {
-                                    message.insert("url".to_string(), json!(url));
-                                }
-                                if let Some(mimetype) = &doc.mimetype {
-                                    message.insert("mimetype".to_string(), json!(mimetype));
-                                }
-                                if let Some(caption) = &doc.caption {
-                                    message.insert("text".to_string(), json!(caption));
-                                }
-                                if let Some(file_name) = &doc.file_name {
-                                    message.insert("filename".to_string(), json!(file_name));
-                                }
-                                if let Some(file_length) = doc.file_length {
-                                    message.insert("fileLength".to_string(), json!(file_length));
-                                }
-
-                                if base64_enabled {
-                                    match ctx.client.download(doc).await {
-                                        Ok(bytes) => {
-                                            let mime = doc
-                                                .mimetype
-                                                .as_deref()
-                                                .unwrap_or("application/octet-stream");
-                                            let encoded = base64::engine::general_purpose::STANDARD
-                                                .encode(bytes);
-                                            let data_url = format!("data:{};base64,{}", mime, encoded);
-                                            message.insert("base64".to_string(), json!(data_url));
-                                        }
-                                        Err(e) => {
-                                            error!(error = %e, "Failed to download document for webhook base64");
-                                        }
-                                    }
-                                }
-
-                                serde_json::Value::Object(message)
-                            } else if let Some(sticker) = msg.sticker_message.as_deref() {
-                                let mut message = serde_json::Map::new();
-                                message.insert("messageType".to_string(), json!("sticker"));
-
-                                if let Some(url) = &sticker.url {
-                                    message.insert("url".to_string(), json!(url));
-                                }
-                                if let Some(mimetype) = &sticker.mimetype {
-                                    message.insert("mimetype".to_string(), json!(mimetype));
-                                }
-                                if let Some(file_length) = sticker.file_length {
-                                    message.insert("fileLength".to_string(), json!(file_length));
-                                }
-                                if let Some(is_animated) = sticker.is_animated {
-                                    message.insert("isAnimated".to_string(), json!(is_animated));
-                                }
-
-                                if base64_enabled {
-                                    match ctx.client.download(sticker).await {
-                                        Ok(bytes) => {
-                                            let mime = sticker
-                                                .mimetype
-                                                .as_deref()
-                                                .unwrap_or("application/octet-stream");
-                                            let encoded = base64::engine::general_purpose::STANDARD
-                                                .encode(bytes);
-                                            let data_url = format!("data:{};base64,{}", mime, encoded);
-                                            message.insert("base64".to_string(), json!(data_url));
-                                        }
-                                        Err(e) => {
-                                            error!(error = %e, "Failed to download sticker for webhook base64");
-                                        }
-                                    }
-                                }
-
-                                serde_json::Value::Object(message)
-                            } else {
-                                json!({
-                                    "messageType": "conversation",
-                                    "text": text_content
-                                })
-                            };
-
-                            let mut message_item = serde_json::Map::new();
-                            let mut key_item = serde_json::Map::new();
-                            key_item.insert("remoteJid".to_string(), json!(remote_jid));
-                            key_item.insert("fromMe".to_string(), json!(is_from_me));
-                            key_item.insert("MessageId".to_string(), json!(info.id));
-                            key_item.insert(
-                                "participant".to_string(),
-                                if is_from_me {
-                                    serde_json::Value::Null
-                                } else {
-                                    json!(sender_jid.clone())
-                                },
-                            );
-                            if !info.push_name.is_empty() {
-                                key_item.insert("senderName".to_string(), json!(info.push_name));
+                                    chatwarp_api::server::webhooks::enqueue(
+                                        &bg_state,
+                                        Some(bg_instance.as_str()),
+                                        "MESSAGES_UPSERT",
+                                        json!({
+                                            "messages": [serde_json::Value::Object(message_item)],
+                                            "type": "notify"
+                                        })
+                                    ).await;
+                                });
                             }
-                            message_item.insert(
-                                "key".to_string(),
-                                serde_json::Value::Object(key_item),
-                            );
-                            message_item.insert("message".to_string(), message_payload);
-
-                            chatwarp_api::server::webhooks::enqueue(
-                                &state,
-                                Some(&instance_name),
-                                "MESSAGES_UPSERT",
-                                json!({
-                                    "messages": [serde_json::Value::Object(message_item)],
-                                    "type": "notify"
-                                })
-                            ).await;
 
                             if let Some(media_ping_request) = get_pingable_media(&ctx.message) {
                                 handle_media_ping(&ctx, media_ping_request).await;
@@ -517,48 +538,55 @@ fn main() {
                             if let Some(text) = ctx.message.text_content()
                                 && text == "ping"
                             {
+                                let start = std::time::Instant::now();
                                 info!(chat = %ctx.info.source.chat, sender = %ctx.info.source.sender, "Received text ping, sending pong");
 
-                                // Send reaction to the ping message
-                                let message_key = wa::MessageKey {
-                                    remote_jid: Some(ctx.info.source.chat.to_string()),
-                                    id: Some(ctx.info.id.clone()),
-                                    from_me: Some(ctx.info.source.is_from_me),
-                                    participant: if ctx.info.source.is_group {
-                                        Some(ctx.info.source.sender.to_string())
-                                    } else {
-                                        None
-                                    },
-                                };
+                                // Fire-and-forget: send reaction in background
+                                {
+                                    let reaction_ctx_client = ctx.client.clone();
+                                    let chat_jid = ctx.info.source.chat.clone();
+                                    let msg_id = ctx.info.id.clone();
+                                    let from_me = ctx.info.source.is_from_me;
+                                    let is_group = ctx.info.source.is_group;
+                                    let sender = ctx.info.source.sender.clone();
 
-                                let reaction_emoji = "🏓".to_string();
+                                    tokio::spawn(async move {
+                                        let message_key = wa::MessageKey {
+                                            remote_jid: Some(chat_jid.to_string()),
+                                            id: Some(msg_id),
+                                            from_me: Some(from_me),
+                                            participant: if is_group {
+                                                Some(sender.to_string())
+                                            } else {
+                                                None
+                                            },
+                                        };
 
-                                let reaction_message = wa::message::ReactionMessage {
-                                    key: Some(message_key),
-                                    text: Some(reaction_emoji),
-                                    sender_timestamp_ms: Some(Utc::now().timestamp_millis()),
-                                    ..Default::default()
-                                };
+                                        let reaction_message = wa::message::ReactionMessage {
+                                            key: Some(message_key),
+                                            text: Some("🏓".to_string()),
+                                            sender_timestamp_ms: Some(Utc::now().timestamp_millis()),
+                                            ..Default::default()
+                                        };
 
-                                let final_message_to_send = wa::Message {
-                                    reaction_message: Some(reaction_message),
-                                    ..Default::default()
-                                };
+                                        let final_message_to_send = wa::Message {
+                                            reaction_message: Some(reaction_message),
+                                            ..Default::default()
+                                        };
 
-                                if let Err(e) = ctx.send_message(final_message_to_send).await {
-                                    error!(error = %e, "Failed to send reaction");
+                                        if let Err(e) = reaction_ctx_client.send_message(chat_jid, final_message_to_send).await {
+                                            error!(error = %e, "Failed to send reaction");
+                                        }
+                                    });
                                 }
 
-                                let start = std::time::Instant::now();
-
-                                // Determine participant JID
+                                // Determine participant JID for quoting
                                 let participant_jid = if ctx.info.source.is_from_me {
                                     ctx.client.get_pn().await.unwrap_or_default().to_string()
                                 } else {
                                     ctx.info.source.sender.to_string()
                                 };
 
-                                // Construct ContextInfo for quoting
                                 let context_info = wa::ContextInfo {
                                     stanza_id: Some(ctx.info.id.clone()),
                                     participant: Some(participant_jid),
@@ -566,35 +594,11 @@ fn main() {
                                     ..Default::default()
                                 };
 
-                                // Create the initial quoted reply message
-                                let reply_message = wa::Message {
-                                    extended_text_message: Some(Box::new(
-                                        wa::message::ExtendedTextMessage {
-                                            text: Some("🏓 Pong!".to_string()),
-                                            context_info: Some(Box::new(context_info.clone())),
-                                            ..Default::default()
-                                        },
-                                    )),
-                                    ..Default::default()
-                                };
-
-                                // 1. Send the initial message and get its ID
-                                let sent_msg_id = match ctx.send_message(reply_message).await {
-                                    Ok(id) => id,
-                                    Err(e) => {
-                                        error!(error = %e, "Failed to send initial pong message");
-                                        return;
-                                    }
-                                };
-
-                                // 2. Calculate the duration
                                 let duration = start.elapsed();
                                 let duration_str = format!("{:.2?}", duration);
 
-                                info!(elapsed = %duration_str, message_id = %sent_msg_id, "Sent pong response, editing message with latency");
-
-                                // 3. Create the new content for the message
-                                let updated_content = wa::Message {
+                                // Single message with timing included — no edit needed
+                                let reply_message = wa::Message {
                                     extended_text_message: Some(Box::new(
                                         wa::message::ExtendedTextMessage {
                                             text: Some(format!("🏓 Pong!\n`{}`", duration_str)),
@@ -605,13 +609,14 @@ fn main() {
                                     ..Default::default()
                                 };
 
-                                // 4. Edit the original message with the new content
-                                if let Err(e) =
-                                    ctx.edit_message(sent_msg_id.clone(), updated_content).await
-                                {
-                                    error!(message_id = %sent_msg_id, error = %e, "Failed to edit message");
-                                } else {
-                                    info!(message_id = %sent_msg_id, "Successfully edited message");
+                                match ctx.send_message(reply_message).await {
+                                    Ok(id) => {
+                                        let total = start.elapsed();
+                                        info!(elapsed = ?total, message_id = %id, "Pong sent (single message, no edit)");
+                                    }
+                                    Err(e) => {
+                                        error!(error = %e, "Failed to send pong message");
+                                    }
                                 }
                             }
                         }

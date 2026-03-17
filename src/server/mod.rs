@@ -33,6 +33,9 @@ pub struct AppState {
     pub api_password_hash: Option<[u8; 32]>,
     pub session_ttl_seconds: u64,
     pub message_notify: mpsc::Sender<()>,
+    /// In-memory cache for webhook configs to avoid DB queries on every message.
+    /// Key: instance name, Value: (cached config, timestamp of cache entry).
+    pub webhook_config_cache: DashMap<String, (Option<crate::models::webhook_model::WebhookConfig>, std::time::Instant)>,
 }
 
 #[derive(Clone, Debug, Default)]

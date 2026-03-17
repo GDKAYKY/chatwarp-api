@@ -2,6 +2,7 @@
     use crate::http::{HttpClient, HttpRequest, HttpResponse};
     use crate::store::SqliteStore;
     use chatwarp_api_tokio_transport::TokioWebSocketTransportFactory;
+    use waproto::whatsapp as wa;
 
     // Mock HTTP client for testing
     #[derive(Debug, Clone)]

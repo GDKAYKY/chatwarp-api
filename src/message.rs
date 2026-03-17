@@ -510,6 +510,20 @@ impl Client {
             // already returned dispatched_undecryptable=false for this case)
             self.dispatch_undecryptable_event(&info, crate::types::events::DecryptFailMode::Show);
             // Do NOT send delivery receipt - transport ack is sufficient
+            return;
+        }
+
+        // Send delivery receipt once per message after successful processing
+        // Only send if we successfully decrypted at least one enc node
+        if session_decrypted_successfully
+            || session_had_duplicates
+            || !group_content_enc_nodes.is_empty()
+        {
+            let client_clone = self.clone();
+            let info_clone = info.clone();
+            tokio::spawn(async move {
+                client_clone.send_delivery_receipt(&info_clone).await;
+            });
         }
     }
 
@@ -929,14 +943,6 @@ impl Client {
         padding_version: u8,
         info: &MessageInfo,
     ) -> Result<(), anyhow::Error> {
-        // Send delivery receipt immediately in the background.
-        // This should not block further message processing.
-        let client_clone = self.clone();
-        let info_clone = info.clone();
-        tokio::spawn(async move {
-            client_clone.send_delivery_receipt(&info_clone).await;
-        });
-
         let plaintext_slice = MessageUtils::unpad_message_ref(padded_plaintext, padding_version)?;
         log::trace!(
             "Successfully decrypted message from {}: {} bytes (type: {}) [batch path]",
