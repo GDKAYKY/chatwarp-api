@@ -117,7 +117,7 @@ impl Client {
     /// Returns an error only if the prekey fetch itself fails (network error).
     /// Individual session establishment failures are logged but don't fail the batch.
     async fn fetch_and_establish_sessions(&self, jids: &[Jid]) -> Result<usize, anyhow::Error> {
-        use rand::TryRngCore;
+        use rand::SeedableRng;
         use warp_core::libsignal::protocol::{UsePQRatchet, process_prekey_bundle};
         use warp_core::types::jid::JidExt;
 
@@ -143,7 +143,7 @@ impl Client {
                     &mut adapter.session_store,
                     &mut adapter.identity_store,
                     bundle,
-                    &mut rand::rngs::OsRng.unwrap_err(),
+                    &mut rand::rngs::StdRng::from_os_rng(),
                     UsePQRatchet::No,
                 )
                 .await

@@ -68,10 +68,12 @@ pub async fn message_encrypt(
     session_store: &mut dyn SessionStore,
     identity_store: &mut dyn IdentityKeyStore,
 ) -> Result<CiphertextMessage> {
+    let load_start = std::time::Instant::now();
     let mut session_record = session_store
         .load_session(remote_address)
         .await?
         .ok_or_else(|| SignalProtocolError::SessionNotFound(remote_address.clone()))?;
+    log::info!("🔥 load_session took {:?}", load_start.elapsed());
     let session_state = session_record
         .session_state_mut()
         .ok_or_else(|| SignalProtocolError::SessionNotFound(remote_address.clone()))?;

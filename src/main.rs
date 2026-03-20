@@ -32,6 +32,7 @@ use dashmap::DashMap;
 fn init_tracing() {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        // .add_directive("ureq_proto::util=warn".parse().unwrap());
 
     let _ = tracing_subscriber::registry()
         .with(env_filter)

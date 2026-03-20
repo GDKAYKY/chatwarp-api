@@ -99,6 +99,34 @@ pub trait SignalStore: Send + Sync {
         Ok(self.get_session(address).await?.is_some())
     }
 
+    // --- Batch Session Operations ---
+
+    /// Load multiple sessions in a single query. Returns `(address, record)` pairs
+    /// only for addresses that have an existing session.
+    ///
+    /// Default implementation falls back to N individual `get_session` calls.
+    /// Backends should override for real batch performance.
+    async fn get_sessions_batch(&self, addresses: &[&str]) -> Result<Vec<(String, Vec<u8>)>> {
+        let mut results = Vec::new();
+        for addr in addresses {
+            if let Some(data) = self.get_session(addr).await? {
+                results.push((addr.to_string(), data));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Store multiple sessions atomically. Each entry is `(address, record)`.
+    ///
+    /// Default implementation falls back to N individual `put_session` calls.
+    /// Backends should override to wrap all writes in a single transaction.
+    async fn put_sessions_batch(&self, entries: &[(&str, &[u8])]) -> Result<()> {
+        for (addr, data) in entries {
+            self.put_session(addr, data).await?;
+        }
+        Ok(())
+    }
+
     // --- PreKey Operations ---
 
     /// Store a pre-key.

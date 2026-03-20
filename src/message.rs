@@ -1286,13 +1286,19 @@ impl Client {
             },
         };
 
+        let t0 = std::time::Instant::now();
         let device_arc = self.persistence_manager.get_device_arc().await;
+        log::debug!("⏱️ get_device_arc: {:?}", t0.elapsed());
+
+        let t1 = std::time::Instant::now();
         let mut device_guard = device_arc.write().await;
+        log::debug!("⏱️ device_arc.write(): {:?}", t1.elapsed());
 
         let sender_address = sender_jid.to_protocol_address();
 
         let sender_key_name = SenderKeyName::new(group_jid.to_string(), sender_address.to_string());
 
+        let t2 = std::time::Instant::now();
         if let Err(e) =
             process_sender_key_distribution_message(&sender_key_name, &skdm, &mut *device_guard)
                 .await
@@ -1303,6 +1309,10 @@ impl Client {
                 e
             );
         } else {
+            log::debug!(
+                "⏱️ process_sender_key_distribution_message: {:?}",
+                t2.elapsed()
+            );
             log::info!(
                 "Successfully processed sender key distribution for group {} from {}",
                 group_jid,

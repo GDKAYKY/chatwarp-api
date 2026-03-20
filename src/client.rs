@@ -1749,11 +1749,15 @@ impl Client {
             return Err(SocketError::Crypto("Marshal error".to_string()).into());
         }
 
+        let t0 = std::time::Instant::now();
         let (plaintext_buf, encrypted_buf) = match noise_socket
             .encrypt_and_send(plaintext_buf, encrypted_buf)
             .await
         {
-            Ok(bufs) => bufs,
+            Ok(bufs) => {
+                log::debug!("⏱️ encrypt_and_send: {:?}", t0.elapsed());
+                bufs
+            }
             Err(mut e) => {
                 let p_buf = std::mem::take(&mut e.plaintext_buf);
                 let o_buf = std::mem::take(&mut e.out_buf);

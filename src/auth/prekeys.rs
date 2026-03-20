@@ -9,8 +9,7 @@ use crate::request::InfoQuery;
 use warp_core_binary::builder::NodeBuilder;
 
 use anyhow;
-use rand::TryRngCore;
-use rand_core::OsRng;
+use rand::SeedableRng;
 use warp_core::libsignal::protocol::KeyPair;
 use warp_core::libsignal::store::record_helpers::new_pre_key_record;
 
@@ -149,7 +148,7 @@ impl Client {
                 break;
             }
 
-            let key_pair = KeyPair::generate(&mut OsRng.unwrap_err());
+            let key_pair = KeyPair::generate(&mut rand::rngs::StdRng::from_os_rng());
             let pre_key_record = new_pre_key_record(pre_key_id, &key_pair);
 
             keys_to_upload.push((pre_key_id, pre_key_record));

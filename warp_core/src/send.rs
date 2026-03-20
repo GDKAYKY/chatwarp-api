@@ -12,14 +12,114 @@ use crate::reporting_token::{
 use crate::types::jid::JidExt;
 use anyhow::{Result, anyhow};
 use prost::Message as ProtoMessage;
-use rand::{CryptoRng, Rng, TryRngCore as _};
-use std::collections::HashSet;
+use rand::{CryptoRng, Rng, SeedableRng, rngs::StdRng};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 use waproto::whatsapp as wa;
 use waproto::whatsapp::message::DeviceSentMessage;
 use warp_core_binary::builder::NodeBuilder;
 use warp_core_binary::jid::{Jid, JidExt as _};
 use warp_core_binary::node::{Attrs, Node};
 use warp_core_libsignal::crypto::aes_256_cbc_encrypt_into;
+
+// ============================================================================
+// CachedSessionStore — scoped write-behind cache for the send pipeline
+// ============================================================================
+
+use crate::libsignal::protocol::{ProtocolAddress, SessionRecord};
+
+/// A scoped write-behind session cache for the send pipeline.
+///
+/// Wraps an inner `SessionStore` and caches every `load_session` result.
+/// `store_session` writes only to cache and marks the address dirty.
+/// Call [`flush`] after encryption to drain all dirty entries back to the
+/// inner store.
+///
+/// # Why RefCell?
+///
+/// The Signal `SessionStore` trait takes `&self` for loads and `&mut self` for
+/// stores. We need interior mutability for the cache because `load_session`
+/// (which populates the cache on miss) takes `&self`.
+struct CachedSessionStore<'a, S> {
+    inner: &'a S,
+    cache: RefCell<HashMap<ProtocolAddress, Option<SessionRecord>>>,
+    dirty: RefCell<HashSet<ProtocolAddress>>,
+}
+
+impl<'a, S> CachedSessionStore<'a, S> {
+    fn new(inner: &'a S) -> Self {
+        Self {
+            inner,
+            cache: RefCell::new(HashMap::new()),
+            dirty: RefCell::new(HashSet::new()),
+        }
+    }
+}
+
+impl<'a, S> CachedSessionStore<'a, S>
+where
+    S: crate::libsignal::protocol::SessionStore + Send + Sync,
+{
+    /// Extract all dirty (modified) sessions from the cache.
+    ///
+    /// After calling this, the caller should drop `self` to release the
+    /// immutable borrow on the inner store, then write the returned entries
+    /// back using `stores.session_store.store_session()`.
+    fn take_dirty(&self) -> Vec<(ProtocolAddress, SessionRecord)> {
+        let dirty_addrs: Vec<ProtocolAddress> = self.dirty.borrow_mut().drain().collect();
+        let cache = self.cache.borrow();
+        dirty_addrs
+            .into_iter()
+            .filter_map(|addr| {
+                cache
+                    .get(&addr)
+                    .and_then(|opt| opt.as_ref())
+                    .map(|record| (addr, record.clone()))
+            })
+            .collect()
+    }
+}
+
+// Safety: CachedSessionStore is only used within a single async task (the
+// encrypt loop) and never shared across threads. The RefCell is needed
+// because load_session takes &self but must populate the cache on miss.
+unsafe impl<S: Send> Send for CachedSessionStore<'_, S> {}
+unsafe impl<S: Sync> Sync for CachedSessionStore<'_, S> {}
+
+#[async_trait::async_trait]
+impl<S> crate::libsignal::protocol::SessionStore for CachedSessionStore<'_, S>
+where
+    S: crate::libsignal::protocol::SessionStore + Send + Sync,
+{
+    async fn load_session(
+        &self,
+        address: &ProtocolAddress,
+    ) -> std::result::Result<Option<SessionRecord>, SignalProtocolError> {
+        // Cache hit
+        if let Some(entry) = self.cache.borrow().get(address) {
+            return Ok(entry.clone());
+        }
+        // Cache miss — load from inner store and cache the result
+        let record = self.inner.load_session(address).await?;
+        self.cache
+            .borrow_mut()
+            .insert(address.clone(), record.clone());
+        Ok(record)
+    }
+
+    async fn store_session(
+        &mut self,
+        address: &ProtocolAddress,
+        record: &SessionRecord,
+    ) -> std::result::Result<(), SignalProtocolError> {
+        self.cache
+            .borrow_mut()
+            .insert(address.clone(), Some(record.clone()));
+        self.dirty.borrow_mut().insert(address.clone());
+        Ok(())
+    }
+}
 
 pub async fn encrypt_group_message<S, R>(
     sender_key_store: &mut S,
@@ -100,6 +200,352 @@ pub struct SignalStores<'a, S, I, P, SP> {
     pub signed_prekey_store: &'a SP,
 }
 
+/// A device paired with the plaintext it should receive.
+/// Allows a single pass over all devices regardless of payload type.
+struct DeviceTask<'p> {
+    device_jid: Jid,
+    plaintext: &'p [u8],
+}
+
+/// Resolve the effective encryption JID for a device.
+///
+/// For PN JIDs, check if an existing session lives under the corresponding LID
+/// (established when the remote sent us a message using sender_lid).
+/// Returns `(encryption_jid, needs_prekey)`.
+async fn resolve_encryption_jid<S>(
+    session_store: &mut S,
+    resolver: &dyn SendContextResolver,
+    device_jid: &Jid,
+) -> (Jid, bool)
+where
+    S: crate::libsignal::protocol::SessionStore + Send + Sync,
+{
+    let signal_address = device_jid.to_protocol_address();
+
+    if session_store
+        .load_session(&signal_address)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return (device_jid.clone(), false);
+    }
+
+    if device_jid.is_pn() {
+        if let Some(lid_user) = resolver.get_lid_for_phone(&device_jid.user).await {
+            let lid_jid = Jid::lid_device(lid_user, device_jid.device);
+            let lid_address = lid_jid.to_protocol_address();
+            if session_store
+                .load_session(&lid_address)
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                log::debug!(
+                    "Using existing LID session {} instead of creating new PN session for {}",
+                    lid_jid,
+                    device_jid
+                );
+                return (lid_jid, false);
+            }
+        }
+    }
+
+    (device_jid.clone(), true)
+}
+
+/// Establish Signal sessions for devices that have no session yet.
+async fn establish_missing_sessions<'a, S, I>(
+    session_store: &mut S,
+    identity_store: &mut I,
+    resolver: &dyn SendContextResolver,
+    jids_needing_prekeys: &[Jid],
+) -> Result<()>
+where
+    S: crate::libsignal::protocol::SessionStore + Send + Sync,
+    I: crate::libsignal::protocol::IdentityKeyStore + Send + Sync,
+{
+    if jids_needing_prekeys.is_empty() {
+        return Ok(());
+    }
+
+    let prekey_start = Instant::now();
+    let prekey_bundles = resolver
+        .fetch_prekeys_for_identity_check(jids_needing_prekeys)
+        .await?;
+    let prekey_elapsed = prekey_start.elapsed();
+    if prekey_elapsed > Duration::from_millis(250) {
+        log::info!(
+            "establish_missing_sessions: prekey fetch took {} ms for {} devices",
+            prekey_elapsed.as_millis(),
+            jids_needing_prekeys.len()
+        );
+    }
+
+    for device_jid in jids_needing_prekeys {
+        let signal_address = device_jid.to_protocol_address();
+        let Some(bundle) = prekey_bundles.get(device_jid) else {
+            log::warn!(
+                "No pre-key bundle returned for device {}. Skipping.",
+                &signal_address
+            );
+            continue;
+        };
+
+        let result = process_prekey_bundle(
+            &signal_address,
+            session_store,
+            identity_store,
+            bundle,
+            &mut StdRng::from_os_rng(),
+            UsePQRatchet::No,
+        )
+        .await;
+
+        match result {
+            Ok(_) => {}
+            Err(SignalProtocolError::UntrustedIdentity(ref addr)) => {
+                log::info!("Untrusted identity for {}. Updating and retrying.", addr);
+                let new_identity = match bundle.identity_key() {
+                    Ok(k) => k,
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to get identity key for {}: {:?}. Skipping.",
+                            addr,
+                            e
+                        );
+                        continue;
+                    }
+                };
+                if let Err(e) = identity_store
+                    .save_identity(&signal_address, new_identity)
+                    .await
+                {
+                    log::warn!("Failed to save identity for {}: {:?}. Skipping.", addr, e);
+                    continue;
+                }
+                if let Err(e) = process_prekey_bundle(
+                    &signal_address,
+                    session_store,
+                    identity_store,
+                    bundle,
+                    &mut StdRng::from_os_rng(),
+                    UsePQRatchet::No,
+                )
+                .await
+                {
+                    log::warn!(
+                        "Failed to establish session with {} after identity update: {:?}. Skipping.",
+                        addr,
+                        e
+                    );
+                }
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to process pre-key bundle for {}: {:?}",
+                    signal_address,
+                    e
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Encrypt `plaintext` for a single device and return the XML node.
+///
+/// `device_jid` is what the server sees in the `to` attribute; `encryption_jid`
+/// is the JID whose Signal session is actually used for encryption (may differ
+/// when a LID session is reused for a PN-addressed device).
+async fn encrypt_one_device<'a, S, I>(
+    stores_session: &mut S,
+    stores_identity: &mut I,
+    device_jid: &Jid,
+    encryption_jid: &Jid,
+    plaintext: &[u8],
+    enc_extra_attrs: &Attrs,
+) -> Option<(Node, bool)>
+where
+    S: crate::libsignal::protocol::SessionStore + Send + Sync,
+    I: crate::libsignal::protocol::IdentityKeyStore + Send + Sync,
+{
+    let signal_address = encryption_jid.to_protocol_address();
+    let t0 = Instant::now();
+    let result = message_encrypt(plaintext, &signal_address, stores_session, stores_identity).await;
+    let elapsed = t0.elapsed();
+    if elapsed > Duration::from_millis(500) {
+        log::info!("🔥 message_encrypt for {} took {:?}", device_jid, elapsed);
+    }
+
+    match result {
+        Ok(encrypted_payload) => {
+            let (enc_type, is_prekey, serialized_bytes) = match encrypted_payload {
+                CiphertextMessage::PreKeySignalMessage(msg) => {
+                    ("pkmsg", true, msg.serialized().to_vec())
+                }
+                CiphertextMessage::SignalMessage(msg) => ("msg", false, msg.serialized().to_vec()),
+                _ => return None,
+            };
+
+            let mut enc_attrs = Attrs::new();
+            enc_attrs.insert("v".to_string(), "2".to_string());
+            enc_attrs.insert("type".to_string(), enc_type.to_string());
+            for (k, v) in enc_extra_attrs.iter() {
+                enc_attrs.insert(k.clone(), v.clone());
+            }
+
+            let enc_node = NodeBuilder::new("enc")
+                .attrs(enc_attrs)
+                .bytes(serialized_bytes)
+                .build();
+            let to_node = NodeBuilder::new("to")
+                .attr("jid", device_jid.to_string())
+                .children([enc_node])
+                .build();
+            Some((to_node, is_prekey))
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to encrypt for device {}: {}. Skipping.",
+                &signal_address,
+                e
+            );
+            None
+        }
+    }
+}
+
+/// Core encrypt pipeline: one session-map build, one prekey fetch, one encrypt
+/// loop — regardless of how many different plaintexts are involved.
+///
+/// `tasks` carries `(device_jid, plaintext)` so recipient devices and own
+/// devices can be processed in the same pass without duplication.
+async fn encrypt_for_devices_unified<'a, S, I, P, SP>(
+    stores: &mut SignalStores<'a, S, I, P, SP>,
+    resolver: &dyn SendContextResolver,
+    tasks: &[DeviceTask<'_>],
+    enc_extra_attrs: &Attrs,
+) -> Result<(Vec<Node>, bool)>
+where
+    S: crate::libsignal::protocol::SessionStore + Send + Sync,
+    I: crate::libsignal::protocol::IdentityKeyStore + Send + Sync,
+    P: crate::libsignal::protocol::PreKeyStore + Send + Sync,
+    SP: crate::libsignal::protocol::SignedPreKeyStore + Send + Sync,
+{
+    if tasks.is_empty() {
+        return Ok((Vec::new(), false));
+    }
+
+    let total_start = Instant::now();
+
+    // Wrap the session store in a write-behind cache.
+    // Phase 1 reads populate the cache; Phase 3 encryptions get cache hits
+    // instead of redundant DB reads. All dirty writes are flushed once at the
+    // end, avoiding per-device semaphore acquisitions during encryption.
+    let mut cached_session = CachedSessionStore::new(stores.session_store as &S);
+
+    // ── Phase 1: Build session map (ONE load_session per device) ──────────────
+    let map_start = Instant::now();
+    let mut jid_to_encryption_jid: HashMap<Jid, Jid> =
+        HashMap::with_capacity(tasks.len());
+    let mut jids_needing_prekeys: Vec<Jid> = Vec::new();
+
+    for task in tasks {
+        let (enc_jid, needs_prekey) =
+            resolve_encryption_jid(&mut cached_session, resolver, &task.device_jid).await;
+        jid_to_encryption_jid.insert(task.device_jid.clone(), enc_jid);
+        if needs_prekey {
+            jids_needing_prekeys.push(task.device_jid.clone());
+        }
+    }
+
+    let map_elapsed = map_start.elapsed();
+    log::debug!(
+        "encrypt_for_devices_unified: session map built in {} ms (devices={}, needing_prekeys={})",
+        map_elapsed.as_millis(),
+        tasks.len(),
+        jids_needing_prekeys.len()
+    );
+
+    // ── Phase 2: Establish missing sessions (ONE prekey fetch total) ──────────
+    // New sessions created here are written through the cache so Phase 3
+    // will find them without another DB round-trip.
+    establish_missing_sessions(
+        &mut cached_session,
+        stores.identity_store,
+        resolver,
+        &jids_needing_prekeys,
+    )
+    .await?;
+
+    // ── Phase 3: Encrypt (one pass, payload chosen per device) ───────────────
+    // All load_session calls here are cache hits (loaded in Phase 1 or
+    // created in Phase 2). store_session calls go to cache only.
+    let encrypt_start = Instant::now();
+    let mut participant_nodes = Vec::with_capacity(tasks.len());
+    let mut includes_prekey_message = false;
+
+    for task in tasks {
+        let encryption_jid = jid_to_encryption_jid
+            .get(&task.device_jid)
+            .unwrap_or(&task.device_jid);
+
+        if let Some((node, is_prekey)) = encrypt_one_device(
+            &mut cached_session,
+            stores.identity_store,
+            &task.device_jid,
+            encryption_jid,
+            task.plaintext,
+            enc_extra_attrs,
+        )
+        .await
+        {
+            includes_prekey_message |= is_prekey;
+            participant_nodes.push(node);
+        }
+    }
+
+    let encrypt_elapsed = encrypt_start.elapsed();
+
+    // ── Phase 4: Flush dirty sessions to the backend (ONE burst of writes) ───
+    let flush_start = Instant::now();
+    let dirty_entries = cached_session.take_dirty();
+    let dirty_count = dirty_entries.len();
+    // Drop the cache to release the immutable borrow on stores.session_store
+    // before we mutably borrow it for writing.
+    drop(cached_session);
+    log::debug!(
+        "encrypt_for_devices_unified: flushing {} dirty sessions",
+        dirty_count
+    );
+    for (addr, record) in &dirty_entries {
+        stores
+            .session_store
+            .store_session(addr, record)
+            .await
+            .map_err(|e| anyhow!("Failed to flush session for {}: {:?}", addr, e))?;
+    }
+    let flush_elapsed = flush_start.elapsed();
+
+    let total_elapsed = total_start.elapsed();
+    log::debug!(
+        "encrypt_for_devices_unified: {} devices — map {}ms, encrypt {}ms, flush {}ms, total {}ms",
+        tasks.len(),
+        map_elapsed.as_millis(),
+        encrypt_elapsed.as_millis(),
+        flush_elapsed.as_millis(),
+        total_elapsed.as_millis(),
+    );
+
+    Ok((participant_nodes, includes_prekey_message))
+}
+
+/// Legacy single-plaintext wrapper kept for group SKDM distribution which
+/// still uses a single plaintext for all devices.
 async fn encrypt_for_devices<'a, S, I, P, SP>(
     stores: &mut SignalStores<'a, S, I, P, SP>,
     resolver: &dyn SendContextResolver,
@@ -113,233 +559,14 @@ where
     P: crate::libsignal::protocol::PreKeyStore + Send + Sync,
     SP: crate::libsignal::protocol::SignedPreKeyStore + Send + Sync,
 {
-    // Build a map of device JIDs to their effective encryption JIDs.
-    // For phone number JIDs, check if we have an existing session under the corresponding LID.
-    // This handles the case where a session was established via a message with sender_lid,
-    // and now we're sending a reply using the phone number address.
-    let mut jid_to_encryption_jid: std::collections::HashMap<Jid, Jid> =
-        std::collections::HashMap::new();
-    let mut jids_needing_prekeys = Vec::new();
-
-    for device_jid in devices {
-        let signal_address = device_jid.to_protocol_address();
-
-        // First check if we have a session under the phone number address
-        if stores
-            .session_store
-            .load_session(&signal_address)
-            .await?
-            .is_some()
-        {
-            // Session exists under PN address, use it
-            jid_to_encryption_jid.insert(device_jid.clone(), device_jid.clone());
-            continue;
-        }
-
-        // No session under PN - check if there's one under the corresponding LID
-        if device_jid.is_pn()
-            && let Some(lid_user) = resolver.get_lid_for_phone(&device_jid.user).await
-        {
-            // Construct the LID JID with the same device ID
-            let lid_jid = Jid::lid_device(lid_user, device_jid.device);
-            let lid_address = lid_jid.to_protocol_address();
-
-            if stores
-                .session_store
-                .load_session(&lid_address)
-                .await?
-                .is_some()
-            {
-                // Found existing session under LID address - use it!
-                log::debug!(
-                    "Using existing LID session {} instead of creating new PN session for {}",
-                    lid_jid,
-                    device_jid
-                );
-                jid_to_encryption_jid.insert(device_jid.clone(), lid_jid);
-                continue;
-            }
-        }
-
-        // No session found under either address - need to fetch prekeys
-        jid_to_encryption_jid.insert(device_jid.clone(), device_jid.clone());
-        jids_needing_prekeys.push(device_jid.clone());
-    }
-
-    if !jids_needing_prekeys.is_empty() {
-        log::debug!(
-            "Fetching prekeys for {} devices without sessions",
-            jids_needing_prekeys.len()
-        );
-        let prekey_bundles = resolver
-            .fetch_prekeys_for_identity_check(&jids_needing_prekeys)
-            .await?;
-
-        for device_jid in &jids_needing_prekeys {
-            let signal_address = device_jid.to_protocol_address();
-            match prekey_bundles.get(device_jid) {
-                Some(bundle) => {
-                    match process_prekey_bundle(
-                        &signal_address,
-                        stores.session_store,
-                        stores.identity_store,
-                        bundle,
-                        &mut rand::rngs::OsRng.unwrap_err(),
-                        UsePQRatchet::No,
-                    )
-                    .await
-                    {
-                        Ok(_) => {
-                            // Session established successfully
-                        }
-                        Err(SignalProtocolError::UntrustedIdentity(ref addr)) => {
-                            // The stored identity doesn't match the server's identity.
-                            // This typically happens when a user reinstalls WhatsApp.
-                            // We trust the server's identity and update our local store,
-                            // then retry establishing the session.
-                            log::info!(
-                                "Untrusted identity for device {}. Updating identity and retrying session establishment.",
-                                addr
-                            );
-
-                            // Get the new identity from the prekey bundle and save it
-                            let new_identity = match bundle.identity_key() {
-                                Ok(key) => key,
-                                Err(e) => {
-                                    log::warn!(
-                                        "Failed to get identity key from bundle for {}: {:?}. Skipping device.",
-                                        addr,
-                                        e
-                                    );
-                                    continue;
-                                }
-                            };
-
-                            // Save the new identity (this replaces the old one)
-                            if let Err(e) = stores
-                                .identity_store
-                                .save_identity(&signal_address, new_identity)
-                                .await
-                            {
-                                log::warn!(
-                                    "Failed to save updated identity for {}: {:?}. Skipping device.",
-                                    addr,
-                                    e
-                                );
-                                continue;
-                            }
-
-                            log::debug!(
-                                "Identity updated for {}. Retrying session establishment.",
-                                addr
-                            );
-
-                            // Retry processing the prekey bundle with the updated identity
-                            match process_prekey_bundle(
-                                &signal_address,
-                                stores.session_store,
-                                stores.identity_store,
-                                bundle,
-                                &mut rand::rngs::OsRng.unwrap_err(),
-                                UsePQRatchet::No,
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    log::info!(
-                                        "Successfully established session with {} after identity update.",
-                                        addr
-                                    );
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "Failed to establish session with {} even after identity update: {:?}. Skipping device.",
-                                        addr,
-                                        e
-                                    );
-                                    continue;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            // Propagate other unexpected errors
-                            return Err(anyhow::anyhow!(
-                                "Failed to process pre-key bundle for {}: {:?}",
-                                signal_address,
-                                e
-                            ));
-                        }
-                    }
-                }
-                None => {
-                    log::warn!(
-                        "No pre-key bundle returned for device {}. This device will be skipped for encryption.",
-                        &signal_address
-                    );
-                }
-            }
-        }
-    }
-
-    let mut participant_nodes = Vec::new();
-    let mut includes_prekey_message = false;
-
-    for device_jid in devices {
-        // Use the effective encryption JID (may be LID if we found an existing LID session)
-        let encryption_jid = jid_to_encryption_jid.get(device_jid).unwrap_or(device_jid);
-        let signal_address = encryption_jid.to_protocol_address();
-
-        // Try to encrypt for this device. If it fails (e.g., no session established),
-        // log a warning and skip this device instead of failing the entire operation.
-        match message_encrypt(
-            plaintext_to_encrypt,
-            &signal_address,
-            stores.session_store,
-            stores.identity_store,
-        )
-        .await
-        {
-            Ok(encrypted_payload) => {
-                let (enc_type, serialized_bytes) = match encrypted_payload {
-                    CiphertextMessage::PreKeySignalMessage(msg) => {
-                        includes_prekey_message = true;
-                        ("pkmsg", msg.serialized().to_vec())
-                    }
-                    CiphertextMessage::SignalMessage(msg) => ("msg", msg.serialized().to_vec()),
-                    _ => continue,
-                };
-
-                let mut enc_attrs = Attrs::new();
-                enc_attrs.insert("v".to_string(), "2".to_string());
-                enc_attrs.insert("type".to_string(), enc_type.to_string());
-                for (k, v) in enc_extra_attrs.iter() {
-                    enc_attrs.insert(k.clone(), v.clone());
-                }
-
-                let enc_node = NodeBuilder::new("enc")
-                    .attrs(enc_attrs)
-                    .bytes(serialized_bytes)
-                    .build();
-                // Use the original device_jid for the `to` attribute (what the server expects),
-                // but we encrypted using the encryption_jid's session
-                participant_nodes.push(
-                    NodeBuilder::new("to")
-                        .attr("jid", device_jid.to_string())
-                        .children([enc_node])
-                        .build(),
-                );
-            }
-            Err(e) => {
-                log::warn!(
-                    "Failed to encrypt message for device {}: {}. Skipping this device.",
-                    &signal_address,
-                    e
-                );
-            }
-        }
-    }
-
-    Ok((participant_nodes, includes_prekey_message))
+    let tasks: Vec<DeviceTask<'_>> = devices
+        .iter()
+        .map(|jid| DeviceTask {
+            device_jid: jid.clone(),
+            plaintext: plaintext_to_encrypt,
+        })
+        .collect();
+    encrypt_for_devices_unified(stores, resolver, &tasks, enc_extra_attrs).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -383,8 +610,22 @@ pub async fn prepare_dm_stanza<
 
     let own_devices_plaintext = MessageUtils::pad_message_v2(dsm.encode_to_vec());
 
-    let participants = vec![to_jid.clone(), own_jid.clone()];
-    let all_devices = resolver.resolve_devices(&participants).await?;
+    // Deduplicate participants by user+server to avoid resolving the same user twice
+    // (e.g., when sending a DM to self, to_jid and own_jid are the same user).
+    let mut participants = Vec::new();
+    let mut seen_users: HashSet<(String, String)> = HashSet::new();
+    for jid in [to_jid.clone(), own_jid.clone()] {
+        let key = (jid.user.clone(), jid.server.clone());
+        if seen_users.insert(key) {
+            // Use base JID (no device/agent) for device resolution
+            participants.push(jid.to_non_ad());
+        }
+    }
+
+    let mut all_devices = resolver.resolve_devices(&participants).await?;
+    // Deduplicate devices to avoid redundant encryption work if resolver returns overlaps.
+    let mut seen_devices: HashSet<Jid> = HashSet::new();
+    all_devices.retain(|jid| seen_devices.insert(jid.clone()));
 
     let mut recipient_devices = Vec::new();
     let mut own_other_devices = Vec::new();
@@ -396,9 +637,12 @@ pub async fn prepare_dm_stanza<
             recipient_devices.push(device_jid.clone());
         }
     }
-
-    let mut participant_nodes = Vec::new();
-    let mut includes_prekey_message = false;
+    log::info!(
+        "prepare_dm_stanza: devices total={} recipient={} own_other={}",
+        all_devices.len(),
+        recipient_devices.len(),
+        own_other_devices.len()
+    );
 
     // If this is an edit-like message, set decrypt-fail="hide" on enc nodes
     let mut enc_extra_attrs = Attrs::new();
@@ -408,31 +652,24 @@ pub async fn prepare_dm_stanza<
         enc_extra_attrs.insert("decrypt-fail".to_string(), "hide".to_string());
     }
 
-    if !recipient_devices.is_empty() {
-        let (nodes, inc) = encrypt_for_devices(
-            stores,
-            resolver,
-            &recipient_devices,
-            &recipient_plaintext,
-            &enc_extra_attrs,
-        )
-        .await?;
-        participant_nodes.extend(nodes);
-        includes_prekey_message = includes_prekey_message || inc;
+    // Build a single unified task list: recipient devices + own devices in one pass.
+    // This avoids building the session map twice and fetching prekeys twice.
+    let mut tasks: Vec<DeviceTask<'_>> = Vec::with_capacity(all_devices.len());
+    for device_jid in &recipient_devices {
+        tasks.push(DeviceTask {
+            device_jid: device_jid.clone(),
+            plaintext: &recipient_plaintext,
+        });
+    }
+    for device_jid in &own_other_devices {
+        tasks.push(DeviceTask {
+            device_jid: device_jid.clone(),
+            plaintext: &own_devices_plaintext,
+        });
     }
 
-    if !own_other_devices.is_empty() {
-        let (nodes, inc) = encrypt_for_devices(
-            stores,
-            resolver,
-            &own_other_devices,
-            &own_devices_plaintext,
-            &enc_extra_attrs,
-        )
-        .await?;
-        participant_nodes.extend(nodes);
-        includes_prekey_message = includes_prekey_message || inc;
-    }
+    let (participant_nodes, includes_prekey_message) =
+        encrypt_for_devices_unified(stores, resolver, &tasks, &enc_extra_attrs).await?;
 
     let mut message_content_nodes = vec![
         NodeBuilder::new("participants")
@@ -734,7 +971,7 @@ pub async fn prepare_group_stanza<
         &to_jid,
         &own_sending_jid,
         &plaintext,
-        &mut rand::rngs::OsRng.unwrap_err(),
+        &mut StdRng::from_os_rng(),
     )
     .await?;
 
@@ -817,7 +1054,7 @@ pub async fn create_sender_key_distribution_message_for_group(
             group_jid
         );
 
-        let mut rng = rand::rngs::OsRng.unwrap_err();
+        let mut rng = StdRng::from_os_rng();
         let signing_key = crate::libsignal::protocol::KeyPair::generate(&mut rng);
 
         let chain_id = (rng.random::<u32>()) >> 1;
@@ -1252,7 +1489,7 @@ mod tests {
 
     /// Helper function to create a mock PreKeyBundle with valid types
     fn create_mock_bundle() -> PreKeyBundle {
-        let mut rng = rand::rngs::OsRng.unwrap_err();
+        let mut rng = StdRng::from_os_rng();
         let identity_pair = IdentityKeyPair::generate(&mut rng);
         let signed_prekey_pair = KeyPair::generate(&mut rng);
         let prekey_pair = KeyPair::generate(&mut rng);

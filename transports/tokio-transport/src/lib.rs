@@ -137,15 +137,20 @@ impl Transport for TokioWebSocketTransport {
     /// Sends raw data through the WebSocket.
     /// The caller is responsible for any framing.
     async fn send(&self, data: &[u8]) -> Result<(), anyhow::Error> {
+        let t0 = std::time::Instant::now();
         let mut sink_guard = self.ws_sink.lock().await;
+        log::debug!("⏱️ ws_sink.lock(): {:?}", t0.elapsed());
+
         let sink = sink_guard
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Socket is closed"))?;
 
         debug!("--> Sending {} bytes", data.len());
+        let t1 = std::time::Instant::now();
         sink.send(Message::binary(data.to_vec()))
             .await
             .map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))?;
+        log::debug!("⏱️ sink.send(): {:?}", t1.elapsed());
         Ok(())
     }
 

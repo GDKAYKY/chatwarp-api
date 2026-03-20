@@ -1,8 +1,8 @@
 use crate::libsignal::protocol::{IdentityKeyPair, KeyPair};
+use rand::RngCore;
 use once_cell::sync::Lazy;
 use prost::Message;
-use rand::TryRngCore;
-use rand_core::OsRng;
+
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
 use warp_core_binary::jid::Jid;
@@ -131,20 +131,18 @@ impl Default for Device {
 
 impl Device {
     pub fn new() -> Self {
-        use rand::RngCore;
-
-        let identity_key_pair = IdentityKeyPair::generate(&mut OsRng.unwrap_err());
+        let identity_key_pair = IdentityKeyPair::generate(&mut rand::rng());
 
         let identity_key: KeyPair = KeyPair::new(
             *identity_key_pair.public_key(),
             *identity_key_pair.private_key(),
         );
-        let signed_pre_key = KeyPair::generate(&mut OsRng.unwrap_err());
+        let signed_pre_key = KeyPair::generate(&mut rand::rng());
         let signature_box = identity_key_pair
             .private_key()
             .calculate_signature(
                 &signed_pre_key.public_key.serialize(),
-                &mut OsRng.unwrap_err(),
+                &mut rand::rng(),
             )
             .expect("signing with valid Ed25519 key should succeed");
         let signed_pre_key_signature: [u8; 64] = signature_box
@@ -158,7 +156,7 @@ impl Device {
             pn: None,
             lid: None,
             registration_id: 3718719151,
-            noise_key: KeyPair::generate(&mut OsRng.unwrap_err()),
+            noise_key: KeyPair::generate(&mut rand::rng()),
             identity_key,
             signed_pre_key,
             signed_pre_key_id: 1,

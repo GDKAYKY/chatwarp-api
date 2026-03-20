@@ -246,10 +246,12 @@ pub async fn process_sender_key_distribution_message(
         skdm.chain_id()?
     );
 
+    let t0 = std::time::Instant::now();
     let mut sender_key_record = sender_key_store
         .load_sender_key(sender_key_name)
         .await?
         .unwrap_or_else(SenderKeyRecord::new_empty);
+    log::debug!("⏱️ load_sender_key: {:?}", t0.elapsed());
 
     sender_key_record.add_sender_key_state(
         skdm.message_version(),
@@ -259,9 +261,12 @@ pub async fn process_sender_key_distribution_message(
         *skdm.signing_key()?,
         None,
     );
+
+    let t1 = std::time::Instant::now();
     sender_key_store
         .store_sender_key(sender_key_name, &sender_key_record)
         .await?;
+    log::debug!("⏱️ store_sender_key: {:?}", t1.elapsed());
     Ok(())
 }
 

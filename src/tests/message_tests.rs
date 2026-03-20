@@ -2,6 +2,7 @@
     use crate::store::SqliteStore;
     use crate::store::persistence_manager::PersistenceManager;
     use crate::test_utils::MockHttpClient;
+    use rand::{SeedableRng, rngs::StdRng};
     use std::sync::Arc;
     use warp_core_binary::builder::NodeBuilder;
     use warp_core_binary::jid::{Jid, SERVER_JID};
@@ -100,9 +101,10 @@
 
         // 2. Create a valid but undecryptable SignalMessage (encrypted with a dummy key)
         let dummy_key = [0u8; 32];
-        let sender_ratchet = KeyPair::generate(&mut rand::rngs::OsRng.unwrap_err()).public_key;
-        let sender_identity_pair = IdentityKeyPair::generate(&mut rand::rngs::OsRng.unwrap_err());
-        let receiver_identity_pair = IdentityKeyPair::generate(&mut rand::rngs::OsRng.unwrap_err());
+        let mut rng = rand::rngs::StdRng::from_os_rng();
+        let sender_ratchet = KeyPair::generate(&mut rng).public_key;
+        let sender_identity_pair = IdentityKeyPair::generate(&mut rng);
+        let receiver_identity_pair = IdentityKeyPair::generate(&mut rng);
         let signal_message = SignalMessage::new(
             4,
             &dummy_key,
@@ -166,9 +168,10 @@
         // 2. Create a message node with both msg and skmsg
         // The msg will fail to decrypt (no session), so skmsg should be skipped
         let dummy_key = [0u8; 32];
-        let sender_ratchet = KeyPair::generate(&mut rand::rngs::OsRng.unwrap_err()).public_key;
-        let sender_identity_pair = IdentityKeyPair::generate(&mut rand::rngs::OsRng.unwrap_err());
-        let receiver_identity_pair = IdentityKeyPair::generate(&mut rand::rngs::OsRng.unwrap_err());
+        let mut rng = rand::rngs::StdRng::from_os_rng();
+        let sender_ratchet = KeyPair::generate(&mut rng).public_key;
+        let sender_identity_pair = IdentityKeyPair::generate(&mut rng);
+        let receiver_identity_pair = IdentityKeyPair::generate(&mut rng);
         let signal_message = SignalMessage::new(
             4,
             &dummy_key,
@@ -270,7 +273,7 @@
             create_sender_key_distribution_message(
                 &lid_sender_key_name,
                 &mut *device_guard,
-                &mut rand::rngs::OsRng.unwrap_err(),
+                &mut rand::rngs::StdRng::from_os_rng(),
             )
             .await
             .expect("Failed to create SKDM")
@@ -392,7 +395,7 @@
                 create_sender_key_distribution_message(
                     &lid_sender_key_name,
                     &mut *device_guard,
-                    &mut rand::rngs::OsRng.unwrap_err(),
+                    &mut rand::rngs::StdRng::from_os_rng(),
                 )
                 .await
                 .expect("Failed to create SKDM")
@@ -857,7 +860,7 @@
             create_sender_key_distribution_message(
                 &display_sender_key_name,
                 &mut *device_guard,
-                &mut rand::rngs::OsRng.unwrap_err(),
+                &mut rand::rngs::StdRng::from_os_rng(),
             )
             .await
             .expect("Failed to create SKDM");
@@ -947,7 +950,7 @@
             let skdm = create_sender_key_distribution_message(
                 &sender_key_name,
                 &mut *device_guard,
-                &mut rand::rngs::OsRng.unwrap_err(),
+                &mut rand::rngs::StdRng::from_os_rng(),
             )
             .await
             .expect("Failed to create SKDM");
@@ -967,7 +970,7 @@
                 &mut *device_guard,
                 &sender_key_name,
                 b"ping",
-                &mut rand::rngs::OsRng.unwrap_err(),
+                &mut rand::rngs::StdRng::from_os_rng(),
             )
             .await
             .expect("Failed to encrypt with sender key");

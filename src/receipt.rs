@@ -95,10 +95,14 @@ impl Client {
 
         let receipt_node = NodeBuilder::new("receipt").attrs(attrs).build();
 
+
         info!(target: "Client/Receipt", "Sending delivery receipt for message {} to {}", info.id, info.source.sender);
 
+        let t0 = std::time::Instant::now();
         if let Err(e) = self.send_node(receipt_node).await {
             log::warn!(target: "Client/Receipt", "Failed to send delivery receipt for message {}: {:?}", info.id, e);
+        } else {
+            log::debug!("⏱️ send_node (receipt): {:?}", t0.elapsed());
         }
     }
 }

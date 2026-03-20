@@ -8,13 +8,13 @@ use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use log::warn;
 use prost::Message;
 use std::sync::Arc;
+use waproto::whatsapp as wa;
 use warp_core::appstate::hash::HashState;
 use warp_core::appstate::processor::AppStateMutationMAC;
 use warp_core::libsignal::protocol::{KeyPair, PrivateKey, PublicKey};
 use warp_core::store::Device as CoreDevice;
 use warp_core::store::error::{Result, StoreError};
 use warp_core::store::traits::*;
-use waproto::whatsapp as wa;
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
@@ -42,7 +42,8 @@ type DeviceRow = (
 #[derive(Clone)]
 pub struct SqliteStore {
     pub(crate) pool: SqlitePool,
-    pub(crate) db_semaphore: Arc<tokio::sync::Semaphore>,
+    pub(crate) db_semaphore: Arc<tokio::sync::Semaphore>, // write-only guard
+    pub(crate) read_pool: SqlitePool, // dedicated read connections (no semaphore)
     device_id: i32,
 }
 
@@ -105,9 +106,18 @@ impl SqliteStore {
         .await
         .map_err(|e| StoreError::Database(e.to_string()))??;
 
+        // Separate read pool: WAL mode allows concurrent readers.
+        // Read connections bypass the write semaphore entirely.
+        let read_pool = Pool::builder()
+            .max_size(4)
+            .connection_customizer(Box::new(ConnectionOptions))
+            .build(ConnectionManager::<SqliteConnection>::new(database_url))
+            .map_err(|e| StoreError::Connection(e.to_string()))?;
+
         Ok(Self {
             pool,
             db_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
+            read_pool,
             device_id: 1,
         })
     }
@@ -116,6 +126,7 @@ impl SqliteStore {
         database_url: &str,
         device_id: i32,
     ) -> std::result::Result<Self, StoreError> {
+        // new() already creates both pool and read_pool; just override device_id.
         let mut store = Self::new(database_url).await?;
         store.device_id = device_id;
         Ok(store)
@@ -144,6 +155,24 @@ impl SqliteStore {
         .await
         .map_err(|e| StoreError::Database(e.to_string()))??;
         Ok(result)
+    }
+
+    /// Run a read-only closure on a dedicated read-pool connection.
+    /// No semaphore: WAL mode allows concurrent readers alongside the single writer.
+    async fn with_read_pool<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut SqliteConnection) -> Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let pool = self.read_pool.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool
+                .get()
+                .map_err(|e| StoreError::Connection(e.to_string()))?;
+            f(&mut conn)
+        })
+        .await
+        .map_err(|e| StoreError::Database(e.to_string()))?
     }
 
     fn serialize_keypair(&self, key_pair: &KeyPair) -> Result<Vec<u8>> {
@@ -549,25 +578,18 @@ impl SqliteStore {
         address: &str,
         device_id: i32,
     ) -> Result<Option<Vec<u8>>> {
-        let pool = self.pool.clone();
         let address = address.to_string();
-        let result = self
-            .with_semaphore(move || -> Result<Option<Vec<u8>>> {
-                let mut conn = pool
-                    .get()
-                    .map_err(|e| StoreError::Connection(e.to_string()))?;
-                let res: Option<Vec<u8>> = identities::table
-                    .select(identities::key)
-                    .filter(identities::address.eq(address))
-                    .filter(identities::device_id.eq(device_id))
-                    .first(&mut conn)
-                    .optional()
-                    .map_err(|e| StoreError::Database(e.to_string()))?;
-                Ok(res)
-            })
-            .await?;
-
-        Ok(result)
+        self.with_read_pool(move |conn| {
+            let res: Option<Vec<u8>> = identities::table
+                .select(identities::key)
+                .filter(identities::address.eq(address))
+                .filter(identities::device_id.eq(device_id))
+                .first(conn)
+                .optional()
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+            Ok(res)
+        })
+        .await
     }
 
     pub async fn get_session_for_device(
@@ -575,26 +597,18 @@ impl SqliteStore {
         address: &str,
         device_id: i32,
     ) -> Result<Option<Vec<u8>>> {
-        let pool = self.pool.clone();
         let address_for_query = address.to_string();
-        let result = self
-            .with_semaphore(move || -> Result<Option<Vec<u8>>> {
-                let mut conn = pool
-                    .get()
-                    .map_err(|e| StoreError::Connection(e.to_string()))?;
-                let res: Option<Vec<u8>> = sessions::table
-                    .select(sessions::record)
-                    .filter(sessions::address.eq(address_for_query.clone()))
-                    .filter(sessions::device_id.eq(device_id))
-                    .first(&mut conn)
-                    .optional()
-                    .map_err(|e| StoreError::Database(e.to_string()))?;
-
-                Ok(res)
-            })
-            .await?;
-
-        Ok(result)
+        self.with_read_pool(move |conn| {
+            let res: Option<Vec<u8>> = sessions::table
+                .select(sessions::record)
+                .filter(sessions::address.eq(address_for_query))
+                .filter(sessions::device_id.eq(device_id))
+                .first(conn)
+                .optional()
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+            Ok(res)
+        })
+        .await
     }
 
     pub async fn put_session_for_device(
@@ -1210,6 +1224,104 @@ impl SignalStore for SqliteStore {
     async fn delete_sender_key(&self, address: &str) -> Result<()> {
         self.delete_sender_key_for_device(address, self.device_id)
             .await
+    }
+
+    async fn get_sessions_batch(&self, addresses: &[&str]) -> Result<Vec<(String, Vec<u8>)>> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let addrs: Vec<String> = addresses.iter().map(|a| a.to_string()).collect();
+        let device_id = self.device_id;
+        self.with_read_pool(move |conn| {
+            let results: Vec<(String, Vec<u8>)> = sessions::table
+                .select((sessions::address, sessions::record))
+                .filter(sessions::address.eq_any(&addrs))
+                .filter(sessions::device_id.eq(device_id))
+                .load(conn)
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+            Ok(results)
+        })
+        .await
+    }
+
+    async fn put_sessions_batch(&self, entries: &[(&str, &[u8])]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let owned: Vec<(String, Vec<u8>)> = entries
+            .iter()
+            .map(|(a, d)| (a.to_string(), d.to_vec()))
+            .collect();
+        let pool = self.pool.clone();
+        let db_semaphore = self.db_semaphore.clone();
+        let device_id = self.device_id;
+
+        const MAX_RETRIES: u32 = 5;
+
+        for attempt in 0..=MAX_RETRIES {
+            let permit = db_semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| StoreError::Database(format!("Semaphore error: {}", e)))?;
+
+            let pool_clone = pool.clone();
+            let owned_clone = owned.clone();
+
+            let result = tokio::task::spawn_blocking(move || -> Result<()> {
+                use diesel::Connection;
+                let mut conn = pool_clone
+                    .get()
+                    .map_err(|e| StoreError::Connection(e.to_string()))?;
+                conn.transaction::<_, diesel::result::Error, _>(|conn| {
+                    for (addr, data) in &owned_clone {
+                        diesel::insert_into(sessions::table)
+                            .values((
+                                sessions::address.eq(addr),
+                                sessions::record.eq(data),
+                                sessions::device_id.eq(device_id),
+                            ))
+                            .on_conflict((sessions::address, sessions::device_id))
+                            .do_update()
+                            .set(sessions::record.eq(data))
+                            .execute(conn)?;
+                    }
+                    Ok(())
+                })
+                .map_err(|e| StoreError::Database(e.to_string()))
+            })
+            .await;
+
+            drop(permit);
+
+            match result {
+                Ok(Ok(())) => return Ok(()),
+                Ok(Err(e)) => {
+                    let error_msg = e.to_string();
+                    if (error_msg.contains("locked") || error_msg.contains("busy"))
+                        && attempt < MAX_RETRIES
+                    {
+                        let delay_ms = 10 * 2u64.pow(attempt);
+                        warn!(
+                            "Batch session write failed (attempt {}/{}): {}. Retrying in {}ms...",
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            error_msg,
+                            delay_ms
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Err(e) => return Err(StoreError::Database(format!("Task join error: {}", e))),
+            }
+        }
+
+        Err(StoreError::Database(format!(
+            "Batch session write failed after {} attempts",
+            MAX_RETRIES + 1
+        )))
     }
 }
 

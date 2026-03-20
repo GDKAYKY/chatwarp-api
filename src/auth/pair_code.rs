@@ -49,7 +49,8 @@ use crate::client::Client;
 use crate::request::{InfoQuery, InfoQueryType, IqError};
 use crate::types::events::Event;
 use log::{error, info, warn};
-use rand::TryRngCore;
+
+use rand::SeedableRng;
 use std::sync::Arc;
 use warp_core::libsignal::protocol::KeyPair;
 use warp_core::pair_code::{PairCodeError, PairCodeState, PairCodeUtils};
@@ -135,7 +136,7 @@ impl Client {
         );
 
         // Generate ephemeral keypair for this pairing session
-        let ephemeral_keypair = KeyPair::generate(&mut rand::rngs::OsRng.unwrap_err());
+        let ephemeral_keypair = KeyPair::generate(&mut rand::rngs::StdRng::from_os_rng());
 
         // Get device state for noise key
         let device_snapshot = self.persistence_manager.get_device_snapshot().await;

@@ -3,7 +3,7 @@ use crate::message::RetryReason;
 use crate::types::events::Receipt;
 use log::{info, warn};
 use prost::Message;
-use rand::TryRngCore;
+use rand::{SeedableRng, rngs::StdRng};
 use scopeguard;
 use std::sync::Arc;
 use warp_core::libsignal::protocol::{
@@ -483,7 +483,7 @@ impl Client {
             &mut adapter.session_store,
             &mut adapter.identity_store,
             &bundle,
-            &mut rand::rngs::OsRng.unwrap_err(),
+            &mut StdRng::from_os_rng(),
             UsePQRatchet::No,
         )
         .await?;
@@ -563,7 +563,7 @@ impl Client {
             let device_guard = device_store.read().await;
 
             let new_prekey_id = (rand::random::<u32>() % 16777215) + 1;
-            let new_prekey_keypair = KeyPair::generate(&mut rand::rngs::OsRng.unwrap_err());
+            let new_prekey_keypair = KeyPair::generate(&mut StdRng::from_os_rng());
             let new_prekey_record = warp_core::libsignal::store::record_helpers::new_pre_key_record(
                 new_prekey_id,
                 &new_prekey_keypair,
