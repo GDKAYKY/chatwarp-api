@@ -1255,6 +1255,210 @@ impl SignalStore for PostgresStore {
         self.delete_sender_key_for_device(address, self.device_id)
             .await
     }
+
+    async fn get_sessions_batch(&self, addresses: &[&str]) -> Result<Vec<(String, Vec<u8>)>> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let addrs: Vec<String> = addresses.iter().map(|a| a.to_string()).collect();
+        let pool = self.pool.clone();
+        let device_id = self.device_id;
+        self.with_semaphore(move || -> Result<Vec<(String, Vec<u8>)>> {
+            let mut conn = pool
+                .get()
+                .map_err(|e| StoreError::Connection(e.to_string()))?;
+            let results: Vec<(String, Vec<u8>)> = sessions::table
+                .select((sessions::address, sessions::record))
+                .filter(sessions::address.eq_any(&addrs))
+                .filter(sessions::device_id.eq(device_id))
+                .load(&mut conn)
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+            Ok(results)
+        })
+        .await
+    }
+
+    async fn put_sessions_batch(&self, entries: &[(&str, &[u8])]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let owned: Vec<(String, Vec<u8>)> = entries
+            .iter()
+            .map(|(a, d)| (a.to_string(), d.to_vec()))
+            .collect();
+        let pool = self.pool.clone();
+        let db_semaphore = self.db_semaphore.clone();
+        let device_id = self.device_id;
+
+        const MAX_RETRIES: u32 = 5;
+
+        for attempt in 0..=MAX_RETRIES {
+            let permit = db_semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| StoreError::Database(format!("Semaphore error: {}", e)))?;
+
+            let pool_clone = pool.clone();
+            let owned_clone = owned.clone();
+
+            let result = tokio::task::spawn_blocking(move || -> Result<()> {
+                use diesel::Connection;
+                let mut conn = pool_clone
+                    .get()
+                    .map_err(|e| StoreError::Connection(e.to_string()))?;
+                conn.transaction::<_, diesel::result::Error, _>(|conn| {
+                    for (addr, data) in &owned_clone {
+                        diesel::insert_into(sessions::table)
+                            .values((
+                                sessions::address.eq(addr),
+                                sessions::record.eq(data),
+                                sessions::device_id.eq(device_id),
+                            ))
+                            .on_conflict((sessions::address, sessions::device_id))
+                            .do_update()
+                            .set(sessions::record.eq(data))
+                            .execute(conn)?;
+                    }
+                    Ok(())
+                })
+                .map_err(|e| StoreError::Database(e.to_string()))
+            })
+            .await;
+
+            drop(permit);
+
+            match result {
+                Ok(Ok(())) => return Ok(()),
+                Ok(Err(e)) => {
+                    let error_msg = e.to_string();
+                    if (error_msg.contains("locked") || error_msg.contains("busy"))
+                        && attempt < MAX_RETRIES
+                    {
+                        let delay_ms = 10 * 2u64.pow(attempt);
+                        warn!(
+                            "Batch session write failed (attempt {}/{}): {}. Retrying in {}ms...",
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            error_msg,
+                            delay_ms
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Err(e) => return Err(StoreError::Database(format!("Task join error: {}", e))),
+            }
+        }
+
+        Err(StoreError::Database(format!(
+            "Batch session write failed after {} attempts",
+            MAX_RETRIES + 1
+        )))
+    }
+
+    async fn load_identities_batch(&self, addresses: &[&str]) -> Result<Vec<(String, Vec<u8>)>> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let addrs: Vec<String> = addresses.iter().map(|a| a.to_string()).collect();
+        let pool = self.pool.clone();
+        let device_id = self.device_id;
+        self.with_semaphore(move || -> Result<Vec<(String, Vec<u8>)>> {
+            let mut conn = pool
+                .get()
+                .map_err(|e| StoreError::Connection(e.to_string()))?;
+            let results: Vec<(String, Vec<u8>)> = identities::table
+                .select((identities::address, identities::key))
+                .filter(identities::address.eq_any(&addrs))
+                .filter(identities::device_id.eq(device_id))
+                .load(&mut conn)
+                .map_err(|e| StoreError::Database(e.to_string()))?;
+            Ok(results)
+        })
+        .await
+    }
+
+    async fn put_identities_batch(&self, entries: &[(&str, [u8; 32])]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let owned: Vec<(String, Vec<u8>)> = entries
+            .iter()
+            .map(|(a, k)| (a.to_string(), k.to_vec()))
+            .collect();
+        let pool = self.pool.clone();
+        let db_semaphore = self.db_semaphore.clone();
+        let device_id = self.device_id;
+
+        const MAX_RETRIES: u32 = 5;
+
+        for attempt in 0..=MAX_RETRIES {
+            let permit = db_semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| StoreError::Database(format!("Semaphore error: {}", e)))?;
+
+            let pool_clone = pool.clone();
+            let owned_clone = owned.clone();
+
+            let result = tokio::task::spawn_blocking(move || -> Result<()> {
+                use diesel::Connection;
+                let mut conn = pool_clone
+                    .get()
+                    .map_err(|e| StoreError::Connection(e.to_string()))?;
+                conn.transaction::<_, diesel::result::Error, _>(|conn| {
+                    for (addr, key_data) in &owned_clone {
+                        diesel::insert_into(identities::table)
+                            .values((
+                                identities::address.eq(addr),
+                                identities::key.eq(key_data),
+                                identities::device_id.eq(device_id),
+                            ))
+                            .on_conflict((identities::address, identities::device_id))
+                            .do_update()
+                            .set(identities::key.eq(key_data))
+                            .execute(conn)?;
+                    }
+                    Ok(())
+                })
+                .map_err(|e| StoreError::Database(e.to_string()))
+            })
+            .await;
+
+            drop(permit);
+
+            match result {
+                Ok(Ok(())) => return Ok(()),
+                Ok(Err(e)) => {
+                    let error_msg = e.to_string();
+                    if (error_msg.contains("locked") || error_msg.contains("busy"))
+                        && attempt < MAX_RETRIES
+                    {
+                        let delay_ms = 10 * 2u64.pow(attempt);
+                        warn!(
+                            "Batch identity write failed (attempt {}/{}): {}. Retrying in {}ms...",
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            error_msg,
+                            delay_ms
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Err(e) => return Err(StoreError::Database(format!("Task join error: {}", e))),
+            }
+        }
+
+        Err(StoreError::Database(format!(
+            "Batch identity write failed after {} attempts",
+            MAX_RETRIES + 1
+        )))
+    }
 }
 
 #[async_trait]

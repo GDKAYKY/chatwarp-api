@@ -27,7 +27,10 @@ use warp_core_libsignal::crypto::aes_256_cbc_encrypt_into;
 // CachedSessionStore — scoped write-behind cache for the send pipeline
 // ============================================================================
 
-use crate::libsignal::protocol::{ProtocolAddress, SessionRecord};
+use crate::libsignal::protocol::{
+    Direction, IdentityChange, IdentityKey, IdentityKeyPair, IdentityKeyStore, ProtocolAddress,
+    SessionRecord,
+};
 
 /// A scoped write-behind session cache for the send pipeline.
 ///
@@ -54,6 +57,30 @@ impl<'a, S> CachedSessionStore<'a, S> {
             cache: RefCell::new(HashMap::new()),
             dirty: RefCell::new(HashSet::new()),
         }
+    }
+}
+
+impl<'a, S> CachedSessionStore<'a, S>
+where
+    S: crate::libsignal::protocol::SessionStore + Send + Sync,
+{
+    /// Pre-populate the cache by batch-loading sessions for all addresses.
+    ///
+    /// After this call, `load_session` for any of these addresses will be a
+    /// cache hit (even if the session doesn't exist — we cache `None`).
+    async fn populate_from_batch(
+        &self,
+        addresses: &[ProtocolAddress],
+    ) -> std::result::Result<(), SignalProtocolError> {
+        if addresses.is_empty() {
+            return Ok(());
+        }
+        let results = self.inner.load_sessions_batch(addresses).await?;
+        let mut cache = self.cache.borrow_mut();
+        for (addr, record) in results {
+            cache.entry(addr).or_insert(record);
+        }
+        Ok(())
     }
 }
 
@@ -118,6 +145,177 @@ where
             .insert(address.clone(), Some(record.clone()));
         self.dirty.borrow_mut().insert(address.clone());
         Ok(())
+    }
+}
+
+// ============================================================================
+// CachedIdentityStore — write-through + read cache for the send pipeline
+// ============================================================================
+
+/// A scoped identity cache for the send pipeline.
+///
+/// **Read cache**: all `get_identity` / `is_trusted_identity` calls hit cache
+/// after first DB load, eliminating 3 out of 4 `spawn_blocking` round-trips
+/// per device.
+///
+/// **Write-through safety**: `save_identity` compares against the cache:
+/// - Identity **unchanged** (99.9% during sends) → cache-only, batched later.
+/// - Identity **changed** → immediate write-through to inner store.
+///
+/// This preserves the Signal Protocol TOFU trust model while eliminating
+/// redundant DB reads.
+///
+/// The cache lives only for the duration of one `encrypt_for_devices_unified`
+/// call — no cross-request staleness.
+struct CachedIdentityStore<'a, I> {
+    inner: &'a mut I,
+    cache: RefCell<HashMap<ProtocolAddress, Option<IdentityKey>>>,
+    /// Only genuinely NEW identities (first seen — not in DB) go here.
+    /// Unchanged identities (already persisted) are NOT marked dirty.
+    dirty_new: RefCell<HashMap<ProtocolAddress, IdentityKey>>,
+    identity_pair: RefCell<Option<IdentityKeyPair>>,
+    registration_id: RefCell<Option<u32>>,
+}
+
+impl<'a, I> CachedIdentityStore<'a, I> {
+    fn new(inner: &'a mut I) -> Self {
+        Self {
+            inner,
+            cache: RefCell::new(HashMap::new()),
+            dirty_new: RefCell::new(HashMap::new()),
+            identity_pair: RefCell::new(None),
+            registration_id: RefCell::new(None),
+        }
+    }
+}
+
+impl<'a, I> CachedIdentityStore<'a, I>
+where
+    I: IdentityKeyStore + Send + Sync,
+{
+    /// Extract new identities that need to be persisted.
+    fn take_dirty(&self) -> Vec<(ProtocolAddress, IdentityKey)> {
+        self.dirty_new.borrow_mut().drain().collect()
+    }
+
+    /// Pre-populate the identity cache from batch-loaded raw key data.
+    ///
+    /// Each entry is `(address_string, key_bytes)` from a backend batch query.
+    /// After this call, `get_identity` for these addresses will be cache hits.
+    fn pre_populate(&self, entries: &[(String, Vec<u8>)]) {
+        use crate::libsignal::protocol::PublicKey;
+        let mut cache = self.cache.borrow_mut();
+        for (addr_str, key_bytes) in entries {
+            if let Ok(public_key) = PublicKey::deserialize(key_bytes) {
+                let identity_key = IdentityKey::new(public_key);
+                // Parse "name.device_id" format from address string
+                if let Some(dot_pos) = addr_str.rfind('.') {
+                    if let Ok(device_id) = addr_str[dot_pos + 1..].parse::<u32>() {
+                        let name = &addr_str[..dot_pos];
+                        let protocol_addr = ProtocolAddress::new(name.to_string(), device_id.into());
+                        cache.entry(protocol_addr).or_insert(Some(identity_key));
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Safety: same as CachedSessionStore — single async task, never shared.
+unsafe impl<I: Send> Send for CachedIdentityStore<'_, I> {}
+unsafe impl<I: Sync> Sync for CachedIdentityStore<'_, I> {}
+
+#[async_trait::async_trait]
+impl<I> IdentityKeyStore for CachedIdentityStore<'_, I>
+where
+    I: IdentityKeyStore + Send + Sync,
+{
+    async fn get_identity_key_pair(
+        &self,
+    ) -> std::result::Result<IdentityKeyPair, SignalProtocolError> {
+        if let Some(pair) = self.identity_pair.borrow().as_ref() {
+            return Ok(pair.clone());
+        }
+        let pair = self.inner.get_identity_key_pair().await?;
+        *self.identity_pair.borrow_mut() = Some(pair.clone());
+        Ok(pair)
+    }
+
+    async fn get_local_registration_id(&self) -> std::result::Result<u32, SignalProtocolError> {
+        if let Some(id) = *self.registration_id.borrow() {
+            return Ok(id);
+        }
+        let id = self.inner.get_local_registration_id().await?;
+        *self.registration_id.borrow_mut() = Some(id);
+        Ok(id)
+    }
+
+    async fn save_identity(
+        &mut self,
+        address: &ProtocolAddress,
+        identity: &IdentityKey,
+    ) -> std::result::Result<IdentityChange, SignalProtocolError> {
+        let existing = self.get_identity(address).await?;
+
+        match existing {
+            Some(ref stored) if stored != identity => {
+                // Identity CHANGED — write-through immediately (TOFU safety)
+                log::info!(
+                    "CachedIdentityStore: identity changed for {}, flushing immediately",
+                    address
+                );
+                let result = self.inner.save_identity(address, identity).await?;
+                self.cache
+                    .borrow_mut()
+                    .insert(address.clone(), Some(identity.clone()));
+                Ok(result)
+            }
+            Some(_) => {
+                // Identity UNCHANGED — already persisted in DB, just update cache.
+                // No dirty marking needed: the DB already has this exact key.
+                self.cache
+                    .borrow_mut()
+                    .insert(address.clone(), Some(identity.clone()));
+                Ok(IdentityChange::NewOrUnchanged)
+            }
+            None => {
+                // Identity NEW (first seen) — cache it and mark dirty for batch flush.
+                self.cache
+                    .borrow_mut()
+                    .insert(address.clone(), Some(identity.clone()));
+                self.dirty_new
+                    .borrow_mut()
+                    .insert(address.clone(), identity.clone());
+                Ok(IdentityChange::NewOrUnchanged)
+            }
+        }
+    }
+
+    async fn is_trusted_identity(
+        &self,
+        address: &ProtocolAddress,
+        identity: &IdentityKey,
+        _direction: Direction,
+    ) -> std::result::Result<bool, SignalProtocolError> {
+        // TOFU: trust on first use, must match if stored
+        match self.get_identity(address).await? {
+            None => Ok(true),
+            Some(stored) => Ok(&stored == identity),
+        }
+    }
+
+    async fn get_identity(
+        &self,
+        address: &ProtocolAddress,
+    ) -> std::result::Result<Option<IdentityKey>, SignalProtocolError> {
+        if let Some(entry) = self.cache.borrow().get(address) {
+            return Ok(entry.clone());
+        }
+        let identity = self.inner.get_identity(address).await?;
+        self.cache
+            .borrow_mut()
+            .insert(address.clone(), identity.clone());
+        Ok(identity)
     }
 }
 
@@ -448,10 +646,37 @@ where
     // end, avoiding per-device semaphore acquisitions during encryption.
     let mut cached_session = CachedSessionStore::new(stores.session_store as &S);
 
-    // ── Phase 1: Build session map (ONE load_session per device) ──────────────
+    // Wrap the identity store in a write-through + read cache.
+    // Eliminates 3 out of 4 spawn_blocking round-trips per device in Phase 3.
+    // Identity reads are cached; unchanged writes are deferred; changed
+    // identities are flushed immediately (TOFU safety).
+    let mut cached_identity = CachedIdentityStore::new(stores.identity_store);
+
+    // ── Phase 1: Build session map ─────────────────────────────────────────────
+    // Pre-populate the session cache in one batch DB query. This replaces N
+    // individual load_session calls with a single SELECT ... WHERE IN (...).
+    // We also pre-load potential LID addresses so the resolve_encryption_jid
+    // LID fallback path is also a cache hit.
     let map_start = Instant::now();
-    let mut jid_to_encryption_jid: HashMap<Jid, Jid> =
-        HashMap::with_capacity(tasks.len());
+
+    {
+        let mut batch_addrs: Vec<ProtocolAddress> = Vec::with_capacity(tasks.len() * 2);
+        for task in tasks {
+            batch_addrs.push(task.device_jid.to_protocol_address());
+            // Pre-load potential LID fallback addresses so resolve_encryption_jid
+            // doesn't trigger individual DB loads.
+            if task.device_jid.is_pn() {
+                if let Some(lid_user) = resolver.get_lid_for_phone(&task.device_jid.user).await {
+                    let lid_jid = Jid::lid_device(lid_user, task.device_jid.device);
+                    batch_addrs.push(lid_jid.to_protocol_address());
+                }
+            }
+        }
+        cached_session.populate_from_batch(&batch_addrs).await
+            .map_err(|e| anyhow!("Failed to batch-load sessions: {:?}", e))?;
+    }
+
+    let mut jid_to_encryption_jid: HashMap<Jid, Jid> = HashMap::with_capacity(tasks.len());
     let mut jids_needing_prekeys: Vec<Jid> = Vec::new();
 
     for task in tasks {
@@ -476,7 +701,7 @@ where
     // will find them without another DB round-trip.
     establish_missing_sessions(
         &mut cached_session,
-        stores.identity_store,
+        &mut cached_identity,
         resolver,
         &jids_needing_prekeys,
     )
@@ -485,6 +710,7 @@ where
     // ── Phase 3: Encrypt (one pass, payload chosen per device) ───────────────
     // All load_session calls here are cache hits (loaded in Phase 1 or
     // created in Phase 2). store_session calls go to cache only.
+    // Identity reads are cache hits; unchanged identity writes go to cache only.
     let encrypt_start = Instant::now();
     let mut participant_nodes = Vec::with_capacity(tasks.len());
     let mut includes_prekey_message = false;
@@ -496,7 +722,7 @@ where
 
         if let Some((node, is_prekey)) = encrypt_one_device(
             &mut cached_session,
-            stores.identity_store,
+            &mut cached_identity,
             &task.device_jid,
             encryption_jid,
             task.plaintext,
@@ -513,31 +739,50 @@ where
 
     // ── Phase 4: Flush dirty sessions to the backend (ONE burst of writes) ───
     let flush_start = Instant::now();
-    let dirty_entries = cached_session.take_dirty();
-    let dirty_count = dirty_entries.len();
-    // Drop the cache to release the immutable borrow on stores.session_store
-    // before we mutably borrow it for writing.
+    let dirty_sessions = cached_session.take_dirty();
+    let dirty_session_count = dirty_sessions.len();
+    // Drop the session cache to release the immutable borrow on session_store.
     drop(cached_session);
+
+    // ── Phase 4.5: Flush dirty identities ────────────────────────────────────
+    let dirty_identities = cached_identity.take_dirty();
+    let dirty_identity_count = dirty_identities.len();
+    // Drop the identity cache to release the mutable borrow on identity_store.
+    drop(cached_identity);
+
     log::debug!(
-        "encrypt_for_devices_unified: flushing {} dirty sessions",
-        dirty_count
+        "encrypt_for_devices_unified: flushing {} dirty sessions + {} dirty identities",
+        dirty_session_count,
+        dirty_identity_count
     );
-    for (addr, record) in &dirty_entries {
+
+    // Batch-flush all dirty sessions in one transactional write.
+    if !dirty_sessions.is_empty() {
         stores
             .session_store
-            .store_session(addr, record)
+            .store_sessions_batch(&dirty_sessions)
             .await
-            .map_err(|e| anyhow!("Failed to flush session for {}: {:?}", addr, e))?;
+            .map_err(|e| anyhow!("Failed to batch-flush {} sessions: {:?}", dirty_session_count, e))?;
+    }
+
+    for (addr, key) in &dirty_identities {
+        stores
+            .identity_store
+            .save_identity(addr, key)
+            .await
+            .map_err(|e| anyhow!("Failed to flush identity for {}: {:?}", addr, e))?;
     }
     let flush_elapsed = flush_start.elapsed();
 
     let total_elapsed = total_start.elapsed();
     log::debug!(
-        "encrypt_for_devices_unified: {} devices — map {}ms, encrypt {}ms, flush {}ms, total {}ms",
+        "encrypt_for_devices_unified: {} devices — map {}ms, encrypt {}ms, flush {}ms ({}s+{}i), total {}ms",
         tasks.len(),
         map_elapsed.as_millis(),
         encrypt_elapsed.as_millis(),
         flush_elapsed.as_millis(),
+        dirty_session_count,
+        dirty_identity_count,
         total_elapsed.as_millis(),
     );
 

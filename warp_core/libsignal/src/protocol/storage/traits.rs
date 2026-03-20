@@ -140,6 +140,35 @@ pub trait SessionStore: ThreadSafe {
         address: &ProtocolAddress,
         record: &SessionRecord,
     ) -> Result<()>;
+
+    /// Load multiple sessions in one batch.
+    ///
+    /// Returns `(address, record)` pairs only for addresses that have an
+    /// existing session. Default implementation falls back to sequential calls.
+    async fn load_sessions_batch(
+        &self,
+        addresses: &[ProtocolAddress],
+    ) -> Result<Vec<(ProtocolAddress, Option<SessionRecord>)>> {
+        let mut results = Vec::with_capacity(addresses.len());
+        for addr in addresses {
+            let record = self.load_session(addr).await?;
+            results.push((addr.clone(), record));
+        }
+        Ok(results)
+    }
+
+    /// Store multiple sessions in one batch.
+    ///
+    /// Default implementation falls back to sequential calls.
+    async fn store_sessions_batch(
+        &mut self,
+        entries: &[(ProtocolAddress, SessionRecord)],
+    ) -> Result<()> {
+        for (addr, record) in entries {
+            self.store_session(addr, record).await?;
+        }
+        Ok(())
+    }
 }
 
 /// Interface for storing sender key records, allowing multiple keys per user.

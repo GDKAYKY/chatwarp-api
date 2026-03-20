@@ -90,6 +90,72 @@ impl SessionStore for SessionAdapter {
 
         Ok(())
     }
+
+    async fn load_sessions_batch(
+        &self,
+        addresses: &[ProtocolAddress],
+    ) -> Result<Vec<(ProtocolAddress, Option<SessionRecord>)>, SignalProtocolError> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let addr_strs: Vec<String> = addresses.iter().map(|a| a.to_string()).collect();
+        let addr_refs: Vec<&str> = addr_strs.iter().map(|s| s.as_str()).collect();
+
+        let device = self.0.device.read().await;
+        let raw_results = device
+            .backend
+            .get_sessions_batch(&addr_refs)
+            .await
+            .map_err(|e| SignalProtocolError::InvalidState("backend", e.to_string()))?;
+
+        // Build a map of address-string → raw bytes for quick lookup
+        let found: std::collections::HashMap<&str, &[u8]> = raw_results
+            .iter()
+            .map(|(addr, data)| (addr.as_str(), data.as_slice()))
+            .collect();
+
+        let mut results = Vec::with_capacity(addresses.len());
+        for (addr, addr_str) in addresses.iter().zip(addr_strs.iter()) {
+            match found.get(addr_str.as_str()) {
+                Some(data) => {
+                    let record = SessionRecord::deserialize(data)?;
+                    results.push((addr.clone(), Some(record)));
+                }
+                None => results.push((addr.clone(), None)),
+            }
+        }
+        Ok(results)
+    }
+
+    async fn store_sessions_batch(
+        &mut self,
+        entries: &[(ProtocolAddress, SessionRecord)],
+    ) -> Result<(), SignalProtocolError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let serialized: Vec<(String, Vec<u8>)> = entries
+            .iter()
+            .map(|(addr, record)| {
+                let bytes = record.serialize()?;
+                Ok((addr.to_string(), bytes))
+            })
+            .collect::<Result<Vec<_>, SignalProtocolError>>()?;
+
+        let batch: Vec<(&str, &[u8])> = serialized
+            .iter()
+            .map(|(addr, data)| (addr.as_str(), data.as_slice()))
+            .collect();
+
+        let device = self.0.device.read().await;
+        device
+            .backend
+            .put_sessions_batch(&batch)
+            .await
+            .map_err(|e| SignalProtocolError::InvalidState("backend", e.to_string()))?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]

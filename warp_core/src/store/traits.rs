@@ -127,6 +127,34 @@ pub trait SignalStore: Send + Sync {
         Ok(())
     }
 
+    // --- Batch Identity Operations ---
+
+    /// Load multiple identity keys in a single query. Returns `(address, key_bytes)`
+    /// pairs only for addresses that have a stored identity.
+    ///
+    /// Default implementation falls back to N individual `load_identity` calls.
+    /// Backends should override for real batch performance.
+    async fn load_identities_batch(&self, addresses: &[&str]) -> Result<Vec<(String, Vec<u8>)>> {
+        let mut results = Vec::new();
+        for addr in addresses {
+            if let Some(data) = self.load_identity(addr).await? {
+                results.push((addr.to_string(), data));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Store multiple identity keys atomically. Each entry is `(address, key)`.
+    ///
+    /// Default implementation falls back to N individual `put_identity` calls.
+    /// Backends should override to wrap all writes in a single transaction.
+    async fn put_identities_batch(&self, entries: &[(&str, [u8; 32])]) -> Result<()> {
+        for (addr, key) in entries {
+            self.put_identity(addr, *key).await?;
+        }
+        Ok(())
+    }
+
     // --- PreKey Operations ---
 
     /// Store a pre-key.
